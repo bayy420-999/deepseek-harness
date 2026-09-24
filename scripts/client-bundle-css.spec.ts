@@ -49,4 +49,30 @@ describe('client bundle CSS Modules', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it('emits classic media-query syntax for older WebViews (chrome 90 target)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-client-css-media-'))
+    try {
+      const stylesheet = join(root, 'Fixture.module.css')
+      const importer = join(root, 'index.ts')
+      await writeFile(
+        stylesheet,
+        '@media (max-width: 720px) { .phone { display: block; } }\n',
+      )
+      const plugin = cssPlugin()
+      const virtualId = plugin.resolveId?.('./Fixture.module.css', importer)
+      if (typeof virtualId !== 'string' || plugin.load === undefined) {
+        throw new Error('CSS Modules plugin hooks are incomplete')
+      }
+      const output = await plugin.load.call({ addWatchFile: () => {} }, virtualId)
+
+      // The chrome:90 target pins the classic (max-width:…) form: the modern
+      // range syntax (width<=…) is dropped verbatim by WebViews older than
+      // Chromium 104, which would silently break the 720px phone breakpoint.
+      expect(output).toContain('@media (max-width:720px)')
+      expect(output).not.toContain('width<=')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 })

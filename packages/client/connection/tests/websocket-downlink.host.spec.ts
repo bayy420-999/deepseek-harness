@@ -131,6 +131,34 @@ describe('WebSocket downlinks', () => {
     })
   })
 
+  it('compresses the downlink with permessage-deflate', async () => {
+    // A large, repetitive frame: without the extension the wire would be
+    // ~payload size; deflate should shrink it to a small fraction.
+    const payload = JSON.stringify({
+      rpcId: 'big',
+      payload: {
+        type: 'terminal/row', sessionId: 'session-compress', streamId: 't0',
+        text: 'the quick brown fox jumps over the lazy dog '.repeat(500),
+      },
+    })
+    const downlinks = new WebSocketDownlinks(api(
+      async function * () { yield JSON.parse(payload) as never },
+      idle,
+    ))
+    const host = await serve(downlinks)
+    running.push(host.close)
+    const socket = new WebSocket(`${host.origin}${MUX_EVENTS_PATH}`)
+    await once(socket, 'open')
+    let wire = 0
+    ;(socket as unknown as { _socket: import('node:net').Socket })._socket
+      .on('data', (chunk: Buffer) => { wire += chunk.length })
+    const closed = once(socket, 'close')
+    expect((await read(socket)).rpcId).toBe('big')
+    await closed
+    expect(wire).toBeGreaterThan(0)
+    expect(wire).toBeLessThan(Buffer.byteLength(payload) / 2)
+  })
+
   it('rejects client messages because upstream remains HTTP', async () => {
     let aborted = false
     const downlinks = new WebSocketDownlinks(api(
