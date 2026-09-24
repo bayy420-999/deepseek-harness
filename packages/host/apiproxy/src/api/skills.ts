@@ -16,6 +16,12 @@ export interface SkillEntry {
   readonly description: string
   /** Optional extra routing guidance. */
   readonly whenToUse?: string
+  /**
+   * Optional user-facing grouping label authored in the skill's frontmatter.
+   * Menus may subdivide the skill list by it verbatim; display data only —
+   * invocation and the model catalog ignore it.
+   */
+  readonly category?: string
   /** False marks a user-only skill (`disable-model-invocation`): invocable here, absent from the model catalog. */
   readonly modelInvocable: boolean
 }

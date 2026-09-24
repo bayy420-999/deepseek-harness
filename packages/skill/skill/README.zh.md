@@ -32,6 +32,8 @@
 
 `SkillSummary.invocation` 是一个必填的类型化策略对象，其正向布尔字段 `modelInvocable` 和 `userInvocable` 分别描述两个接口。提供方会在每个候选项和定义中返回这一已解析形状；只有 `SkillRegistration` 输入可以省略它，此时 `register()` 会补入 `{ modelInvocable: true, userInvocable: true }`。注册表保留全部四种组合，使一次发现结果可以同时服务面向模型的工具、面向用户的命令和受信内部调用方，而不会混淆各自的目录。
 
+`SkillSummary.category` 是可选的面向用户分组标签，由提供方从 skill frontmatter 原样透传；注册表在候选项、定义与概述中原样携带它，它也不会进入面向模型的目录。
+
 | 策略 | 模型 | 用户 |
 |---|---|---|
 | `{ modelInvocable: true, userInvocable: true }` | 包含 | 包含 |

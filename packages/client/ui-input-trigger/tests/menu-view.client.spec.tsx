@@ -3,6 +3,7 @@
  * MenuView rendering spec, props-direct: closed store
  * renders null, groups render in roster order under localized title rows
  * (unknown sources fall back to the raw name) with pending rows as loading,
+ * category sub-headings split a source's items into labeled runs,
  * pointer picks route (source, index) back without stealing focus, the
  * highlight is exposed through aria-activedescendant + aria-selected, and
  * the list height clamps to the space above the composer.
@@ -70,6 +71,12 @@ function titles(container: HTMLElement): string[] {
     .map(el => el.textContent ?? '')
 }
 
+/** The category sub-heading rows (role=presentation, no data-source), in document order. */
+function categoryTitles(container: HTMLElement): string[] {
+  return [...container.querySelectorAll('div[role="presentation"]:not([data-source])')]
+    .map(el => el.textContent ?? '')
+}
+
 describe('MenuView', () => {
   it('renders null while closed and appears when the store opens', () => {
     const { menu, view } = mount(CLOSED)
@@ -97,6 +104,45 @@ describe('MenuView', () => {
       ],
     }))
     expect(titles(view.container)).toEqual(['命令', 'mystery', '技能'])
+  })
+
+  it('renders a category sub-heading wherever the category changes between adjacent items', () => {
+    const { view } = mount(openState({
+      groups: [
+        {
+          source: 'skill',
+          status: 'ready',
+          items: [
+            { name: 'gmgn-swap', category: 'gmgn' },
+            { name: 'gmgn-token', category: 'gmgn' },
+            { name: 'defuddle', category: 'web' },
+            { name: 'plain' },
+            { name: 'categorized', category: 'web' },
+          ],
+        },
+      ],
+    }))
+    expect(categoryTitles(view.container)).toEqual(['gmgn', 'web', 'web'])
+    const options = screen.getAllByRole('option')
+    expect(options.map(o => o.textContent)).toEqual(['gmgn-swap', 'gmgn-token', 'defuddle', 'plain', 'categorized'])
+  })
+
+  it('routes picks by item index across category runs', () => {
+    const { onPick } = mount(openState({
+      groups: [
+        {
+          source: 'skill',
+          status: 'ready',
+          items: [
+            { name: 'gmgn-swap', category: 'gmgn' },
+            { name: 'defuddle', category: 'web' },
+          ],
+        },
+      ],
+      highlight: null,
+    }))
+    fireEvent.mouseDown(screen.getAllByRole('option')[1]!)
+    expect(onPick).toHaveBeenCalledWith('skill', 1)
   })
 
   it('exposes the highlight via aria-activedescendant and aria-selected', () => {

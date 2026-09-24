@@ -32,6 +32,8 @@ The registry is host+per-scope layered over [`@deepseek-ai/dsh-scope`](../../cor
 
 `SkillSummary.invocation` is a required typed policy object whose positive booleans `modelInvocable` and `userInvocable` describe the two surfaces independently. Providers return this resolved shape on every candidate and definition; only the `SkillRegistration` input may omit it, in which case `register()` supplies `{ modelInvocable: true, userInvocable: true }`. The registry keeps all four combinations so one discovery result can serve model-facing tools, human-facing commands, and trusted internal callers without conflating their catalogs.
 
+`SkillSummary.category` is the optional user-facing grouping label providers pass through from skill frontmatter; the registry carries it verbatim on candidates, definitions, and summaries, and it never reaches the model catalog.
+
 | Policy | Model | User |
 |---|---|---|
 | `{ modelInvocable: true, userInvocable: true }` | included | included |

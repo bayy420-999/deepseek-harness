@@ -14,6 +14,7 @@ export const skillEntrySchema = z.object({
   name: z.string().min(1),
   description: z.string(),
   whenToUse: z.string().optional(),
+  category: z.string().min(1).optional(),
   modelInvocable: z.boolean(),
 }) satisfies z.ZodType<Wire<SkillEntry>>
 

@@ -107,6 +107,7 @@ interface ParsedSkill {
   name: string
   description: string
   whenToUse?: string
+  category?: string
   invocation: SkillInvocationPolicy
   metadata?: Record<string, unknown>
   content: string
@@ -115,6 +116,8 @@ interface ParsedSkill {
 interface LocalLocator {
   path: string
   directory: string
+  /** Discovery group folder name when the skill sits one level below a root. */
+  group?: string
 }
 
 interface ResolvedWatchConfig {
@@ -207,10 +210,12 @@ export class FileSystemSkillProvider implements SkillProvider {
     const locator = candidate.locator as LocalLocator
     const parsed = await parseSkillFile(locator.path, this.ctx, options.signal, candidate.source === 'bundled')
     if (parsed === undefined) return undefined
+    const category = parsed.category ?? (locator.group !== undefined && locator.group.length >= 2 ? locator.group : undefined)
     return {
       name: parsed.name,
       description: parsed.description,
       ...parsed.whenToUse !== undefined ? { whenToUse: parsed.whenToUse } : {},
+      ...category !== undefined ? { category } : {},
       invocation: parsed.invocation,
       source: candidate.source,
       provider: this.name,
@@ -721,29 +726,57 @@ async function discoverRoot(root: SkillRoot, ctx: Context, provider: string): Pr
   const entries = await listSkillRootEntries(root, ctx)
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     if (root.skipSystem && entry.name === '.system') continue
-    const locator = entry.type === 'directory'
-      ? { path: join(entry.path, 'SKILL.md'), directory: entry.path }
-      : entry.type === 'file' && entry.name.endsWith('.md')
-        ? { path: entry.path, directory: root.path }
-        : undefined
-    if (locator === undefined) continue
+    if (entry.type === 'directory') {
+      const directLocator = { path: join(entry.path, 'SKILL.md'), directory: entry.path }
+      const direct = await parseSkillFile(directLocator.path, ctx, undefined, root.trustedHost === true)
+      if (direct !== undefined) {
+        appendParsedSkill(skills, root, provider, directLocator, direct, undefined)
+        continue
+      }
+      // One grouping level: <root>/<group>/<name>/SKILL.md. The group folder
+      // name is the category fallback; nested **/SKILL.md stays excluded.
+      for (const nested of await listSkillRootEntries({ ...root, path: entry.path }, ctx)) {
+        if (root.skipSystem && nested.name === '.system') continue
+        if (nested.type !== 'directory') continue
+        const nestedLocator = { path: join(nested.path, 'SKILL.md'), directory: nested.path, group: entry.name }
+        const parsed = await parseSkillFile(nestedLocator.path, ctx, undefined, root.trustedHost === true)
+        if (parsed === undefined) continue
+        appendParsedSkill(skills, root, provider, nestedLocator, parsed, entry.name)
+      }
+      continue
+    }
+    if (entry.type !== 'file' || !entry.name.endsWith('.md')) continue
+    const locator = { path: entry.path, directory: root.path }
     const parsed = await parseSkillFile(locator.path, ctx, undefined, root.trustedHost === true)
     if (parsed === undefined) continue
-    skills.push({
-      name: parsed.name,
-      description: parsed.description,
-      ...parsed.whenToUse !== undefined ? { whenToUse: parsed.whenToUse } : {},
-      invocation: parsed.invocation,
-      provider,
-      source: root.source,
-      rank: root.rank,
-      locator,
-      resourceBase: { kind: 'directory', path: locator.directory },
-      path: locator.path,
-      ...parsed.metadata !== undefined ? { metadata: parsed.metadata } : {},
-    })
+    appendParsedSkill(skills, root, provider, locator, parsed, undefined)
   }
   return skills
+}
+
+function appendParsedSkill(
+  skills: SkillCandidate[],
+  root: SkillRoot,
+  provider: string,
+  locator: LocalLocator,
+  parsed: ParsedSkill,
+  group: string | undefined,
+): void {
+  const category = parsed.category ?? (group !== undefined && group.length >= 2 ? group : undefined)
+  skills.push({
+    name: parsed.name,
+    description: parsed.description,
+    ...parsed.whenToUse !== undefined ? { whenToUse: parsed.whenToUse } : {},
+    ...category !== undefined ? { category } : {},
+    invocation: parsed.invocation,
+    provider,
+    source: root.source,
+    rank: root.rank,
+    locator,
+    resourceBase: { kind: 'directory', path: locator.directory },
+    path: locator.path,
+    ...parsed.metadata !== undefined ? { metadata: parsed.metadata } : {},
+  })
 }
 
 async function listSkillRootEntries(root: SkillRoot, ctx: Context): Promise<SkillRootEntry[]> {
@@ -828,6 +861,7 @@ async function parseSkillFile(path: string, ctx: Context, signal?: AbortSignal, 
     name,
     description,
     ...optionalString(parsed.data, 'whenToUse'),
+    ...optionalString(parsed.data, 'category'),
     invocation,
     ...optionalMetadata(parsed.data),
     content: parsed.body.trim(),
