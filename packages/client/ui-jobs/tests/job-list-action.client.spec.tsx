@@ -76,6 +76,17 @@ describe('JobListAction visibility', () => {
     expect(screen.getByRole('button', { name: '1 个后台任务' })).toBeDefined()
   })
 
+  it('shows the live count as a numeric badge and drops it at zero live jobs', () => {
+    const { rerender } = render(<JobListAction {...props([job(), job({ id: 'bash-2' as JobView['id'] })])} />)
+    const liveTrigger = screen.getByRole('button', { name: '2 个后台任务运行中' })
+    expect(liveTrigger.textContent).toBe('2')
+
+    rerender(<JobListAction {...props([job({ status: 'completed', finishedAt: START + 3_000 })])} />)
+    const idleTrigger = screen.getByRole('button', { name: '1 个后台任务' })
+    // The queue glyph carries no text node: an idle history entry is icon-only.
+    expect(idleTrigger.textContent).toBe('')
+  })
+
   it('closes and unmounts when the last job disappears while the list is open', () => {
     const { container, rerender } = render(<JobListAction {...props([job()])} />)
     fireEvent.click(screen.getByRole('button'))

@@ -7,7 +7,7 @@
   align-items: center;
   gap: 3px;
   min-height: 28px;
-  padding: 3px 2px;
+  padding: 3px 4px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -22,26 +22,27 @@
   color: var(--dsw-alias-label-secondary);
 }
 
-.trigger svg {
-  transition: transform 120ms ease;
-}
-
-.triggerOpen {
-  transform: rotate(180deg);
-}
-
-.triggerDot {
+.triggerDot,
+.triggerIcon {
   flex: none;
 }
 
-.count {
-  margin: 0 5px;
+/* Live-count badge: a bare figure after the queue glyph; absent at zero, so
+   an idle history entry is just the quiet icon. */
+.badge {
+  font-variant-numeric: tabular-nums;
 }
 
 .menu {
-  position: absolute;
-  top: calc(100% + 5px);
-  left: 0;
+  /* Viewport-fixed: the menu must escape every clipping column ancestor
+     (AppFrame's columns clip overflow), and on phones the whole viewport is
+     narrower than the menu plus two 16px clearances, so a trigger-anchored
+     box always bleeds off one edge. The component measures the rendered menu,
+     anchors it to the trigger, and clamps the fixed left inside the visual
+     viewport. */
+  position: fixed;
+  top: 44px;
+  left: 16px;
   z-index: 100;
   box-sizing: border-box;
   display: flex;

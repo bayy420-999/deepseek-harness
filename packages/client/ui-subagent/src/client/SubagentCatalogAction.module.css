@@ -17,8 +17,9 @@
   cursor: pointer;
 }
 
-.count {
-  margin: 0 5px;
+.triggerIcon {
+  flex: none;
+  display: inline-flex;
 }
 
 .activitySlot {
@@ -42,9 +43,14 @@
 }
 
 .menu {
-  position: absolute;
-  top: calc(100% + 5px);
-  left: 0;
+  /* Viewport-fixed: the menu must escape every clipping column ancestor
+     (AppFrame's columns clip overflow), and on phones the whole viewport is
+     narrower than the menu plus two 16px clearances, so a trigger-anchored
+     box always bleeds off one edge. The component measures the rendered menu
+     and clamps the fixed left inside the visual viewport. */
+  position: fixed;
+  top: 44px;
+  left: 16px;
   z-index: 100;
   box-sizing: border-box;
   display: flex;
