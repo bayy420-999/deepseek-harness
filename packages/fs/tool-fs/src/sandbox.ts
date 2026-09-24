@@ -62,7 +62,8 @@ export class FsSandboxController {
         type: 'string',
         enum: [...this.escalationModes],
         description: 'The wider sandbox mode this file operation needs. Only valid as a one-shot retry '
-          + 'of an operation the sandbox just denied; requires justification and user approval.',
+          + 'of an operation the sandbox just denied; requires justification and user approval. '
+          + 'danger-full-access is the widest mode: when the session already runs under it, omit sandbox_permissions entirely.',
       },
       justification: {
         type: 'string',

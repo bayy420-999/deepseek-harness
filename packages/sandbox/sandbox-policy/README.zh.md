@@ -51,7 +51,7 @@ Current DSH file policy: workspace-write. Any available operation enforced by th
 ##### 完全访问
 
 ```markdown
-Current DSH file policy: danger-full-access. The DSH file sandbox does not restrict file modifications by available operations.
+Current DSH file policy: danger-full-access. The DSH file sandbox does not restrict file modifications by available operations. Do not set sandbox_permissions: danger-full-access is already the widest mode, so any escalation request fails — retry without it.
 ```
 
 #### Token 影响
