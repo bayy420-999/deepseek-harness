@@ -18,13 +18,8 @@ interface DraftAnswer {
   skipped: boolean
 }
 
-/**
- * Displayed feedback: validation feedback is stored as a dictionary KEY and
- * translated at render, so already-shown feedback follows a locale switch;
- * runtime failure messages (finished strings from the wire) pass through
- * verbatim.
- */
-type Feedback = { key: 'error.incomplete' | 'error.unanswered' } | { text: string }
+/** Displayed feedback: finished strings from the wire or local errors. */
+type Feedback = { text: string }
 
 /**
  * Split the conventional recommendation suffix without changing the answer value.
@@ -76,6 +71,14 @@ function QuestionFlow({ pending, t }: { pending: PendingQuestion } & Pick<Questi
   })))
   const [busy, setBusy] = useState<'answer' | 'cancel' | null>(null)
   const [error, setError] = useState<Feedback | null>(null)
+  // Coarse-pointer devices (Android phones, tablets, iPads) have no hardware
+  // Shift, so Enter stays a newline in the textarea and is inert in the
+  // single-line input; the buttons advance the flow. jsdom leaves matchMedia
+  // absent; that reads as a fine-pointer desktop.
+  const touchEnter = useMemo(
+    () => typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches,
+    [],
+  )
   // Collapsed to the header strip so the conversation above stays readable
   // while the user decides; the drafts survive because the state lives here.
   const [minimized, setMinimized] = useState(false)
@@ -125,12 +128,10 @@ function QuestionFlow({ pending, t }: { pending: PendingQuestion } & Pick<Questi
   const completed = (item: DraftAnswer): boolean => answered(item) || item.skipped
 
   const submitDrafts = (values: DraftAnswer[]): void => {
-    const missing = values.findIndex(item => !completed(item))
-    if (missing >= 0) {
-      setIndex(missing)
-      setError({ key: 'error.incomplete' })
-      return
-    }
+    // Completeness is enforced where the decision is made: advance() marks
+    // the current question answered-or-skipped before moving on, and the
+    // option-button Enter path gates on every question completed. Skipped
+    // questions carry no selection so the host keeps the choice.
     const answer: QuestionAnswer = {
       answers: questions.map((item, itemIndex) => {
         const value = values[itemIndex] as DraftAnswer
@@ -151,23 +152,12 @@ function QuestionFlow({ pending, t }: { pending: PendingQuestion } & Pick<Questi
     })
   }
 
-  const continueFlow = (): void => {
-    if (!answered(draft)) {
-      setError({ key: 'error.unanswered' })
-      return
-    }
-    if (index < questions.length - 1) {
-      setIndex(current => current + 1)
-      setError(null)
-      return
-    }
-    submitDrafts(drafts)
-  }
-
   // Shared by the inline custom input and the optionless textarea: a
   // multi-select draft retains checked labels, while a single-select custom
-  // answer replaces its selection. Enter continues the flow (Shift+Enter
+  // answer replaces its selection. Enter acts as the next action (Shift+Enter
   // stays a newline in the textarea; on the single-line input it is inert).
+  // On coarse-pointer devices (no hardware Shift) Enter is a newline in the
+  // textarea and inert in the input: the buttons advance the flow.
   const draftCustom = (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>): void => {
     const value = event.target.value
     updateDraft(current => ({
@@ -180,21 +170,36 @@ function QuestionFlow({ pending, t }: { pending: PendingQuestion } & Pick<Questi
 
   const continueFromCustom = (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>): void => {
     if (event.key !== 'Enter' || event.shiftKey || isComposing(event)) return
+    // Coarse-pointer devices (no hardware Shift) keep Enter as a newline in
+    // the free-form textarea and inert in the single-line input; the flow
+    // advances through its buttons. Fine-pointer devices keep Enter as the
+    // next action (Shift+Enter remains the textarea newline).
+    if (touchEnter) return
     event.preventDefault()
-    continueFlow()
+    advance()
   }
 
   const skipQuestion = (): void => {
-    const nextDrafts = drafts.map((item, itemIndex) => itemIndex === index
-      ? { selected: [], custom: '', skipped: true }
-      : item)
-    setDrafts(nextDrafts)
-    setError(null)
+    updateDraft(current => ({ ...current, selected: [], custom: '', skipped: true }))
+    setIndex(current => current + 1)
+  }
+
+  // The single next action: an answered question fills and advances, an
+  // unanswered one skips (advances marked skipped), and the last question
+  // submits the batch — an unanswered last answer counts as skipped so the
+  // batch completes.
+  const advance = (): void => {
     if (index < questions.length - 1) {
-      setIndex(current => current + 1)
+      if (answered(draft)) {
+        setIndex(current => current + 1)
+        setError(null)
+        return
+      }
+      skipQuestion()
       return
     }
-    submitDrafts(nextDrafts)
+    submitDrafts(drafts.map((item, itemIndex) =>
+      itemIndex === index && !answered(item) ? { ...item, skipped: true } : item))
   }
 
   return (
@@ -301,6 +306,7 @@ function QuestionFlow({ pending, t }: { pending: PendingQuestion } & Pick<Questi
                         value={draft.custom}
                         disabled={busy !== null}
                         placeholder={t('custom.placeholder')}
+                        enterKeyHint={touchEnter ? undefined : 'send'}
                         onChange={draftCustom}
                         onKeyDown={continueFromCustom}
                       />
@@ -314,6 +320,7 @@ function QuestionFlow({ pending, t }: { pending: PendingQuestion } & Pick<Questi
                       disabled={busy !== null}
                       rows={2}
                       placeholder={t('custom.placeholder')}
+                      enterKeyHint={touchEnter ? undefined : 'send'}
                       onFocus={() => { focusedQuestions.current.add(index) }}
                       onChange={draftCustom}
                       onKeyDown={continueFromCustom}
@@ -323,39 +330,30 @@ function QuestionFlow({ pending, t }: { pending: PendingQuestion } & Pick<Questi
             </div>
 
             <footer className={css.footer}>
-              <div className={css.pager}>
-                <button
-                  type="button" className={css.iconButton} aria-label={t('nav.prev')}
-                  disabled={index === 0 || busy !== null}
-                  onClick={() => { setIndex(index - 1); setError(null) }}
-                >
-                  <IconChevronLeftOutline14 />
-                </button>
+              <Button
+                variant="ghost"
+                disabled={index === 0 || busy !== null}
+                onClick={() => { setIndex(index - 1); setError(null) }}
+                icon={<IconChevronLeftOutline14 />}
+              >
+                {t('nav.prev')}
+              </Button>
+              <div className={css.footerCenter}>
                 <span className={css.progress}>{index + 1} / {questions.length}</span>
-                <button
-                  type="button" className={css.iconButton} aria-label={t('nav.next')}
-                  disabled={index === questions.length - 1 || busy !== null}
-                  onClick={() => { setIndex(index + 1); setError(null) }}
-                >
-                  <IconChevronRightOutline14 />
-                </button>
+                <div className={css.feedback} role="status">
+                  {error === null ? null : error.text}
+                </div>
               </div>
-              <div className={css.feedback} role="status">
-                {error === null ? null : 'key' in error ? t(error.key) : error.text}
-              </div>
-              <div className={css.footerActions}>
-                <Button variant="outline" disabled={busy !== null} onClick={skipQuestion}>
-                  {t('action.skip')}
-                </Button>
-                <Button
-                  variant="primary"
-                  disabled={busy !== null || !answered(draft)} onClick={continueFlow}
-                >
-                  {busy === 'answer'
-                    ? t('submitting')
-                    : index === questions.length - 1 ? t('submit') : t('action.next')}
-                </Button>
-              </div>
+              <Button
+                variant="primary"
+                disabled={busy !== null}
+                onClick={advance}
+              >
+                {busy === 'answer'
+                  ? t('submitting')
+                  : index === questions.length - 1 ? t('submit') : t('action.next')}
+                <IconChevronRightOutline14 />
+              </Button>
             </footer>
           </>
         )}

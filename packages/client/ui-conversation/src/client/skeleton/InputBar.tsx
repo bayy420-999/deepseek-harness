@@ -10,8 +10,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { ChangeEvent, KeyboardEvent, MouseEvent, ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  IconPlusOutline16, IconWarningOutline16, Toast, Tooltip,
+  IconPaperclipOutline16, IconPlusOutline16, IconWarningOutline16, Toast, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+// Slash command icon inline SVG used in the + popup menu.
 import { AttachmentRail, DropOverlay, ImageLightbox } from '@deepseek-ai/dsh-client-ui-attachment'
 import type { AttachmentRailItem } from '@deepseek-ai/dsh-client-ui-attachment'
 // Type-only: the `plan` projection key merge (the TodoDock posture — the
@@ -76,6 +77,10 @@ export function InputBar({
   const empty = draft.trim() === '' && attachments.length === 0
   const [preview, setPreview] = useState<ComposerAttachment | null>(null)
   const [dragActive, setDragActive] = useState(false)
+  // + button popup menu: contains "Slash commands" and "Attach media".
+  const [plusMenuOpen, setPlusMenuOpen] = useState(false)
+  const plusMenuRef = useRef<HTMLDivElement | null>(null)
+  const plusButtonRef = useRef<HTMLButtonElement | null>(null)
   // Transient error banner (image-intake rejections and prompt failures): the
   // seq keys the Toast so an identical repeated message restarts the
   // hold-then-fade cycle instead of silently reusing the faded one.
@@ -107,7 +112,15 @@ export function InputBar({
   const dragDepthRef = useRef(0)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const mirrorRef = useRef<HTMLDivElement | null>(null)
+  const fileRef = useRef<HTMLInputElement | null>(null)
   const safari = useMemo(() => isSafariBrowser(navigator), [])
+  // Coarse-pointer devices (Android phones, tablets, iPads) have no hardware
+  // Shift, so plain Enter is a newline there and the Send button is the send
+  // path. jsdom leaves matchMedia absent; that reads as a fine-pointer desktop.
+  const touchEnter = useMemo(
+    () => typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches,
+    [],
+  )
   const safariNativeShrinkRef = useRef(false)
   // IME guard: composition Enter picks a candidate, it must not send. The ref outlives renders;
   // clearing is deferred one tick because Safari delivers the closing keydown AFTER compositionend.
@@ -334,10 +347,15 @@ export function InputBar({
       e.preventDefault()
       return
     }
+    const accelerated = e.ctrlKey || e.metaKey
+    // Coarse-pointer devices (no hardware Shift) take plain Enter as a newline:
+    // the native edit runs unclaimed and the Send button is the send path. The
+    // command menu already consumed its Enter above; accelerated chords keep
+    // their send/steer meaning for hardware keyboards attached to touch devices.
+    if (touchEnter && !accelerated) return
     e.preventDefault()
     if (e.repeat) return // held-down Enter must not machine-gun sends
     if (locked || machineBusy) return
-    const accelerated = e.ctrlKey || e.metaKey
     // Empty-draft accelerated Enter acts on the queue instead of the (empty)
     // draft: the machine rejects empty drafts, so the gesture steers every
     // still-pending queued message into the running turn (the dock's per-row
@@ -464,6 +482,17 @@ export function InputBar({
     if (rejected !== null) showToast(rejected)
   }, [addImages, attachments, imageLimits, showToast, t])
 
+  // Explicit attach button (the mobile path — touch devices have no drag and
+  // the browser does not offer clipboard paste): opening the picker mirrors the
+  // paste/drop intake chain, so limits and rejections surface identically.
+  const onAttachClick = (): void => { fileRef.current?.click() }
+  const onFilePicked = (e: ChangeEvent<HTMLInputElement>): void => {
+    const files = Array.from(e.currentTarget.files ?? [])
+    // Clear the value so picking the same file again re-fires change.
+    e.currentTarget.value = ''
+    if (files.length > 0) intakeImages(files)
+  }
+
   // Whole-page file-drop intake (DeepSeek Chat behavior): the listeners live
   // on the document so a drop anywhere over the window adds images, not only
   // over the composer card. Safe as document-level state: the composer-bar
@@ -522,6 +551,26 @@ export function InputBar({
   }, [canAcceptDrop, intakeImages])
 
   const closePreview = useCallback(() => { setPreview(null) }, [])
+
+  // Close the + popup menu on outside pointer-down.
+  useEffect(() => {
+    if (!plusMenuOpen) return
+    const onPointerDown = (e: PointerEvent): void => {
+      if (!(e.target instanceof Node)) return
+      if (plusMenuRef.current?.contains(e.target) === true) return
+      if (plusButtonRef.current?.contains(e.target) === true) return
+      setPlusMenuOpen(false)
+    }
+    const onKeyDown = (e: globalThis.KeyboardEvent): void => {
+      if (e.key === 'Escape') setPlusMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [plusMenuOpen])
 
   // Rail thumbnails with their strings resolved here: the attachment atoms are
   // zero-cordis and read no locale.
@@ -733,6 +782,7 @@ export function InputBar({
                     ? t('placeholder.steerQueue')
                     : planActive ? t('placeholder.plan') : t('placeholder.default'))}
               rows={2}
+              enterKeyHint={touchEnter ? undefined : 'send'}
               onChange={onChange}
               onKeyDown={onKeyDown}
               onSelect={onSelect}
@@ -747,20 +797,75 @@ export function InputBar({
         </div>
         <div className={css.row}>
           <div className={css.tools}>
-            <Tooltip label={t('input.commands')} side="top" delayMs={500}>
+            {/* Unified + button — opens a popup with Slash Commands and Attach Media. */}
+            <div className={css.plusWrap}>
               <button
+                ref={plusButtonRef}
                 type="button"
-                className={css.add}
-                aria-label={t('input.commands')}
-                aria-haspopup="listbox"
-                aria-expanded={commandMenuOpen}
-                disabled={locked || toggleCommandMenu === undefined}
-                onMouseDown={keepFocus}
-                onClick={onToggleCommandMenu}
+                className={clsx(css.add, plusMenuOpen && css.addActive)}
+                aria-label={t('input.moreOptions')}
+                aria-haspopup="menu"
+                aria-expanded={plusMenuOpen}
+                disabled={locked || (toggleCommandMenu === undefined && addImages === undefined)}
+                onMouseDown={(e) => { e.preventDefault() }}
+                onClick={() => { setPlusMenuOpen(prev => !prev) }}
               >
                 <IconPlusOutline16 size={14} />
               </button>
-            </Tooltip>
+              {plusMenuOpen && (
+                <div ref={plusMenuRef} className={css.plusMenu} role="menu">
+                  {/* Slash commands item */}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={css.plusMenuItem}
+                    disabled={locked || toggleCommandMenu === undefined}
+                    onMouseDown={keepFocus}
+                    onClick={() => {
+                      setPlusMenuOpen(false)
+                      onToggleCommandMenu()
+                    }}
+                  >
+                    <span className={css.plusMenuIcon}>
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+                        <path d="M3 4h10M3 8h6M3 12h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                        <path d="M11 10l2 2-2 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </span>
+                    <span className={css.plusMenuLabel}>{t('input.slashCommands')}</span>
+                  </button>
+                  {/* Attach media item — only shown when images are supported */}
+                  {addImages !== undefined && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={css.plusMenuItem}
+                      disabled={locked || machineBusy}
+                      onMouseDown={keepFocus}
+                      onClick={() => {
+                        setPlusMenuOpen(false)
+                        onAttachClick()
+                      }}
+                    >
+                      <span className={css.plusMenuIcon}>
+                        <IconPaperclipOutline16 size={16} />
+                      </span>
+                      <span className={css.plusMenuLabel}>{t('input.attachMedia')}</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+            <input
+              ref={fileRef}
+              className={css.file}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              multiple
+              tabIndex={-1}
+              aria-hidden="true"
+              onChange={onFilePicked}
+            />
             <div className={css.modes}>
               {accessSelect}
               {renderSlot('conversation.input.plan', { locked })}

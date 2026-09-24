@@ -156,10 +156,17 @@ export class InputHub implements SessionInputResolver {
     const shell = this.shells.get(session.sessionId)
     // Commit, not an editable clear: undo must not resurrect sent content.
     shell?.commitSend(imageIds)
-    void this.conversation().sendSession(session, text, imageIds, mode).catch(() => {
+    void this.conversation().sendSession(session, text, imageIds, mode).catch((error: unknown) => {
       if (this.shells.get(session.sessionId) === shell) {
         shell?.restoreImages(imageIds)
         if (shell?.snapshot.draft === '') shell.setDraft(text)
+        // A host rejection already surfaced via the session's promptError
+        // toast; only a client-side send failure (e.g. an unreadable picked
+        // file) needs the composer notice — never a silent no-op.
+        if (session.getSnapshot().promptError === null) {
+          const message = error instanceof Error ? error.message : String(error)
+          shell?.notify('error', this.t('image.sendFailed', { reason: message }))
+        }
         return
       }
       const conversation = this.rootCtx.get('conversation') as ConversationAttachmentFace | undefined

@@ -237,6 +237,39 @@ describe('image draft rail', () => {
     expect(view.queryByRole('status')).toBeNull()
   })
 
+  it('attaches picked files through the + menu Attach media item (the mobile path)', () => {
+    const addImages = vi.fn(() => null)
+    const { view } = bench({ addImages })
+    // Opening the picker is the + menu's Attach media row; the input stays
+    // hidden and non-focusable so the toolbar never shows a stray file control.
+    const picker = view.container.querySelector<HTMLInputElement>('input[type="file"]')!
+    expect(picker).toBeTruthy()
+    expect(picker.accept).toContain('image/png')
+    expect(picker.multiple).toBe(true)
+    expect(picker.className).toContain('file')
+    expect(picker.tabIndex).toBe(-1)
+    // The + button exposes the Attach media action through its popup menu.
+    const plus = view.getByLabelText('更多选项')
+    fireEvent.click(plus)
+    fireEvent.click(view.getByText('添加媒体'))
+    const image = new File([Uint8Array.of(1, 2, 3)], 'picked.png', { type: 'image/png' })
+    fireEvent.change(picker, { target: { files: [image] } })
+    expect(addImages).toHaveBeenCalledWith([image])
+    // The value resets after intake so re-picking the same file re-fires change.
+    expect(picker.value).toBe('')
+  })
+
+  it('refuses picked files that fail the intake pre-check with product copy', () => {
+    const addImages = vi.fn(() => '仅支持 PNG、JPG、WebP、GIF 格式的图片')
+    const { view } = bench({ addImages })
+    const picker = view.container.querySelector<HTMLInputElement>('input[type="file"]')!
+    fireEvent.change(picker, {
+      target: { files: [new File([Uint8Array.of(1)], 'note.txt', { type: 'text/plain' })] },
+    })
+    expect(addImages).toHaveBeenCalledTimes(1)
+    expect(view.getByRole('alert').textContent).toContain('仅支持 PNG、JPG、WebP、GIF 格式的图片')
+  })
+
   it('keeps text drags native and hides the overlay when the drag leaves or ends', () => {
     const addImages = vi.fn(() => null)
     const { view } = bench({ addImages })
@@ -498,6 +531,28 @@ describe('Enter semantics', () => {
     expect(sink).not.toHaveBeenCalled() // and not preventDefault'd: native newline
   })
 
+  it('on a coarse-pointer device plain Enter is a native newline, not a send', () => {
+    const matchMedia = vi.fn(() => ({ matches: true } as MediaQueryList))
+    vi.stubGlobal('matchMedia', matchMedia)
+    onTestFinished(() => { vi.unstubAllGlobals() })
+    const { textarea, sink } = bench({ draft: 'hello' })
+    // Unclaimed: the browser inserts the newline instead of submitting.
+    expect(fireEvent.keyDown(textarea, { key: 'Enter' })).toBe(true)
+    expect(sink).not.toHaveBeenCalled()
+    // No enterKeyHint on touch: textareas default to a newline-arrow key.
+    expect(textarea.getAttribute('enterkeyhint')).toBeNull()
+    // Accelerated chords keep their send meaning for attached hardware keyboards.
+    fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true })
+    expect(sink).toHaveBeenCalledWith('hello', [], 'queue')
+  })
+
+  it('a fine-pointer device keeps Enter-to-send and the send key hint', () => {
+    const { textarea, sink } = bench({ draft: 'hello' })
+    expect(textarea.getAttribute('enterkeyhint')).toBe('send')
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(sink).toHaveBeenCalledWith('hello', [], 'queue')
+  })
+
   it('Ctrl/Meta+Enter sends normally while idle and steers while running', () => {
     const idle = bench({ draft: 'hello' })
     fireEvent.keyDown(idle.textarea, { key: 'Enter', metaKey: true })
@@ -681,7 +736,7 @@ describe('running and lock semantics', () => {
     })
     expect(textarea.disabled).toBe(true)
     expect(textarea.placeholder).toBe('父会话已离线，无法继续发送；仍可停止当前运行')
-    expect((view.getByLabelText('命令') as HTMLButtonElement).disabled).toBe(true)
+    expect((view.getByLabelText('更多选项') as HTMLButtonElement).disabled).toBe(true)
     expect(button.getAttribute('aria-label')).toBe('发送消息')
     expect(button.disabled).toBe(true)
     expect(interruptButton?.disabled).toBe(false)
@@ -729,7 +784,7 @@ describe('running and lock semantics', () => {
     const { textarea, view } = bench({ disabled: true })
     expect(textarea.disabled).toBe(true)
     expect(textarea.placeholder).toBe('会话不可用')
-    expect((view.getByLabelText('命令') as HTMLButtonElement).disabled).toBe(true)
+    expect((view.getByLabelText('更多选项') as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('idle primary sends and disables on empty draft', () => {
@@ -1086,7 +1141,7 @@ describe('running and lock semantics', () => {
     expect(textarea.readOnly).toBe(true)
     expect(textarea.getAttribute('aria-haspopup')).toBe('menu')
     expect(textarea.getAttribute('aria-expanded')).toBe('false')
-    expect((view.getByLabelText('命令') as HTMLButtonElement).disabled).toBe(true)
+    expect((view.getByLabelText('更多选项') as HTMLButtonElement).disabled).toBe(true)
 
     fireEvent.click(textarea)
     fireEvent.keyDown(textarea, { key: 'Enter' })
@@ -1264,29 +1319,41 @@ describe('strips and variants', () => {
 })
 
 describe('command launcher chrome and control seats', () => {
-  it('renders the command launcher; the Access chip is absent without the permissions projection; the control seats render EMPTY without entries', () => {
+  it('renders the + launcher menu; the Access chip is absent without the permissions projection; the control seats render EMPTY without entries', () => {
     const { view, slotCalls } = bench()
-    expect(view.getByLabelText('命令')).toBeTruthy()
+    expect(view.getByLabelText('更多选项')).toBeTruthy()
+    // The + button opens a menu with Slash commands and Attach media.
+    fireEvent.click(view.getByLabelText('更多选项'))
+    expect(view.getByRole('menu')).toBeTruthy()
+    expect(view.getByText('斜杠命令')).toBeTruthy()
+    expect(view.getByText('添加媒体')).toBeTruthy()
     // Capability absent (no projection value): the chip renders nothing.
     expect(view.queryByLabelText(/^访问模式/)).toBeNull()
-    // Every seat dispatched, nothing rendered.
-    expect(slotCalls.map(c => c.key)).toEqual([
-      'conversation.input.plan', 'conversation.input.model',
+    // Every seat dispatched, nothing rendered. Opening the + menu re-renders
+    // the bar, so the same seats are dispatched again; assert the distinct set.
+    expect([...new Set(slotCalls.map(c => c.key))].sort()).toEqual([
+      'conversation.input.model', 'conversation.input.plan',
     ])
     expect(view.queryByLabelText('Plan mode')).toBeNull()
     expect(view.queryByLabelText('Model')).toBeNull()
   })
 
-  it('passes the textarea selection to the command menu launcher and reflects its expanded state', () => {
+  it('Slash commands passes the textarea selection to the command menu launcher and reflects its expanded state', () => {
     const toggleCommandMenu = vi.fn()
     const { view, textarea, menuLauncher } = bench({ draft: 'draft text', toggleCommandMenu })
     textarea.setSelectionRange(2, 7)
-    const launcher = view.getByLabelText('命令')
+    // The + button opens the launcher menu, whose Slash commands row forwards
+    // the textarea selection to the command menu launcher.
+    const launcher = view.getByLabelText('更多选项')
     expect(launcher.getAttribute('aria-expanded')).toBe('false')
     fireEvent.click(launcher)
+    expect(view.queryByRole('menu')).toBeTruthy()
+    fireEvent.click(view.getByText('斜杠命令'))
     expect(toggleCommandMenu).toHaveBeenCalledExactlyOnceWith({ start: 2, end: 7 })
     act(() => { menuLauncher.set('command') })
-    expect(launcher.getAttribute('aria-expanded')).toBe('true')
+    // The + menu closes after selection; the command menu's own expanded state
+    // lives on the command menu surface, so the launcher returns to closed.
+    expect(launcher.getAttribute('aria-expanded')).toBe('false')
   })
 
   it('the Access chip renders the projection value and submits a non-Full-access pick directly', async () => {
@@ -1424,10 +1491,10 @@ describe('command launcher chrome and control seats', () => {
     expect(live.slotCalls.every(c => !(c.owner as { locked: boolean }).locked)).toBe(true)
   })
 
-  it('disabled locks the Access chip and command launcher (running does not)', () => {
+  it('disabled locks the Access chip and + launcher (running does not)', () => {
     const permissions = { options: [{ value: 'workspace-write', name: 'workspace-write' }], currentValue: 'workspace-write' }
     const { view } = bench({ disabled: true, permissions })
-    expect((view.getByLabelText('命令') as HTMLButtonElement).disabled).toBe(true)
+    expect((view.getByLabelText('更多选项') as HTMLButtonElement).disabled).toBe(true)
     expect((view.getByLabelText(/^访问模式/) as HTMLButtonElement).disabled).toBe(true)
     cleanup()
     const live = bench({ running: true, permissions })

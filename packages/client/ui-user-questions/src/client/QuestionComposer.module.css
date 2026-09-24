@@ -95,18 +95,14 @@
   margin: 0 2px 8px;
 }
 
-.footerActions {
+/* The next action and its previous twin bracket the progress counter, with
+   the error line beneath it. */
+.footerCenter {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 12px;
-  flex-shrink: 0;
-}
-
-.pager {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
+  gap: 2px;
+  min-width: 0;
 }
 
 .progress {
@@ -380,14 +376,16 @@
 }
 
 .feedback {
-  flex: 1;
   min-height: 16px;
   color: var(--dsw-alias-state-error-primary);
   font-size: 11px;
   line-height: 16px;
-  text-align: right;
+  text-align: center;
 }
 
+/* Phone widths (ui-layout's MOBILE_OVERLAY_MAX and below): the card rounds
+   its corners and the header, options, and footer tighten so the choices fit
+   the narrow column. */
 @media (max-width: 720px) {
   .card {
     border-radius: 16px;
@@ -412,12 +410,8 @@
   }
 
   .footer {
-    align-items: flex-end;
+    align-items: center;
     padding: 0 10px;
-  }
-
-  .footerActions {
-    flex-shrink: 0;
   }
 }
 
