@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type {
   ConversationSnapshot, SessionId, SessionListState, WorkspaceListState,
@@ -144,16 +144,18 @@ describe('QuestionComposer', () => {
     expect(view.container.querySelectorAll('li')).toHaveLength(2)
   })
 
-  it('skips individual questions without discarding earlier answers', () => {
+  it('skips unanswered questions without discarding earlier answers', () => {
     const { carrier, respond } = wait()
     render(<QuestionComposer matched={carrier} interactions={[carrier]} {...kit} />)
 
-    expect((screen.getByText('下一题').closest('button') as HTMLButtonElement).disabled).toBe(true)
+    // Answered question: the single next action fills and advances.
     fireEvent.click(screen.getByRole('radio', { name: '研究潜力型' }))
     expect(screen.getByText('2 / 3')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '跳过本题' }))
+    // Unanswered question: the same next action skips it.
+    fireEvent.click(screen.getByText('下一题').closest('button')!)
     expect(screen.getByText('3 / 3')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '跳过本题' }))
+    // Last question: next submits; an unanswered last answer counts as skipped.
+    fireEvent.click(screen.getByRole('button', { name: '提交' }))
 
     expect(respond).toHaveBeenCalledWith(answeredEnvelope('question-1', [
       { id: 'profile', selected: ['研究潜力型'] },
@@ -182,7 +184,40 @@ describe('QuestionComposer', () => {
     expect(screen.getByText('3 / 3')).toBeTruthy()
   })
 
-  it('shows the inline custom input, reports missing answers, and supports pager navigation', () => {
+  it('on a coarse-pointer device Enter stays a newline in the free-form textarea and is inert in the single-line input', () => {
+    const matchMedia = vi.fn(() => ({ matches: true } as MediaQueryList))
+    vi.stubGlobal('matchMedia', matchMedia)
+    onTestFinished(() => { vi.unstubAllGlobals() })
+    const { carrier, respond } = wait()
+    render(<QuestionComposer matched={carrier} interactions={[carrier]} {...kit} />)
+
+    // Question 1 has options: the custom answer is a single-line input. Enter
+    // is inert there (button-only advance) and no send key is advertised.
+    const input = screen.getByPlaceholderText('输入你的答案')
+    expect(input.tagName).toBe('INPUT')
+    fireEvent.change(input, { target: { value: '自定义答案' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(respond).not.toHaveBeenCalled()
+    expect(screen.getByText('1 / 3')).toBeTruthy()
+    expect(input.getAttribute('enterkeyhint')).toBeNull()
+
+    // Question 2 has no options: the free-form textarea keeps Enter as a
+    // newline (unclaimed native edit) and omits enterKeyHint (default key).
+    fireEvent.click(screen.getByRole('radio', { name: /工程落地型/ }))
+    const textarea = screen.getByPlaceholderText('输入你的答案')
+    expect(textarea.tagName).toBe('TEXTAREA')
+    fireEvent.change(textarea, { target: { value: '多行\n答案' } })
+    expect(fireEvent.keyDown(textarea, { key: 'Enter' })).toBe(true)
+    expect(respond).not.toHaveBeenCalled()
+    expect(screen.getByText('2 / 3')).toBeTruthy()
+    expect(textarea.getAttribute('enterkeyhint')).toBeNull()
+
+    // The button still advances the flow.
+    fireEvent.click(screen.getByText('下一题').closest('button')!)
+    expect(screen.getByText('3 / 3')).toBeTruthy()
+  })
+
+  it('keeps Shift+Enter as a textarea newline, skips unanswered questions, and preserves drafts on previous', () => {
     const { carrier, respond } = wait()
     render(<QuestionComposer matched={carrier} interactions={[carrier]} {...kit} />)
 
@@ -191,17 +226,16 @@ describe('QuestionComposer', () => {
     const emptyCustom = screen.getByPlaceholderText('输入你的答案')
     fireEvent.keyDown(emptyCustom, { key: 'Enter', shiftKey: true })
     expect(screen.getByText('2 / 3')).toBeTruthy()
-    fireEvent.keyDown(emptyCustom, { key: 'Enter' })
-    expect(screen.getByText('请选择一个选项或填写自定义答案。')).toBeTruthy()
-
-    fireEvent.click(screen.getByLabelText('下一题'))
-    fireEvent.click(screen.getByRole('checkbox', { name: '产品判断' }))
-    fireEvent.click(screen.getByRole('button', { name: '提交' }))
-    expect(screen.getByText('请先完成这道问题。')).toBeTruthy()
-    expect(screen.getByText('2 / 3')).toBeTruthy()
-    fireEvent.click(screen.getByLabelText('上一题'))
-    expect(screen.getByText('1 / 3')).toBeTruthy()
     expect(respond).not.toHaveBeenCalled()
+    // Unanswered + Enter = the next action skips to the following question.
+    fireEvent.keyDown(emptyCustom, { key: 'Enter' })
+    expect(screen.getByText('3 / 3')).toBeTruthy()
+    expect(respond).not.toHaveBeenCalled()
+
+    // Previous returns to the question with its draft preserved (here empty).
+    fireEvent.click(screen.getByText('上一题').closest('button')!)
+    expect(screen.getByText('2 / 3')).toBeTruthy()
+    expect((screen.getByPlaceholderText('输入你的答案') as HTMLTextAreaElement).value).toBe('')
   })
 
   it('surfaces cancellation failures: rejected receipt text and raw transport reasons', async () => {
@@ -214,7 +248,7 @@ describe('QuestionComposer', () => {
     // Receipt rejection surfaces through the domain face's thrown message.
     fireEvent.click(screen.getByRole('button', { name: '放弃整组问题' }))
     expect(await screen.findByText('question cancellation rejected: bad-response')).toBeTruthy()
-    expect(screen.getByRole<HTMLButtonElement>('button', { name: '跳过本题' }).disabled).toBe(false)
+    expect((screen.getByText('下一题').closest('button') as HTMLButtonElement).disabled).toBe(false)
 
     fireEvent.click(screen.getByRole('button', { name: '放弃整组问题' }))
     expect(await screen.findByText('第二次取消失败')).toBeTruthy()
@@ -257,7 +291,8 @@ describe('QuestionComposer', () => {
       'question', RpcId('solo'), SID, { questions: [{ id: 'detail', question: '补充你的要求' }] }, respond)
     render(<QuestionComposer matched={carrier} interactions={[carrier]} {...kit} t={seatOver(en, commonEn)} />)
     expect(screen.getByLabelText('Dismiss all questions')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Skip this question' })).toBeTruthy()
+    expect(screen.getByText('Previous question')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Submit' })).toBeTruthy()
     expect(screen.getByPlaceholderText('Type your answer')).toBeTruthy()
   })
 
@@ -336,7 +371,7 @@ describe('PendingQuestion domain face', () => {
     // Re-expanding must not steal focus back into the textarea: it was
     // autofocused on first presentation, so focus stays on the expand toggle.
     expect(document.activeElement).not.toBe(custom)
-    fireEvent.click(screen.getByLabelText('下一题'))
+    fireEvent.click(screen.getByText('下一题').closest('button')!)
     fireEvent.click(screen.getByRole('checkbox', { name: '系统设计' }))
     fireEvent.click(screen.getByRole('button', { name: '提交' }))
     expect(respond).toHaveBeenCalledWith(answeredEnvelope('question-1', [

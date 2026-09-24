@@ -94,6 +94,8 @@ export class ConversationController extends Service implements IConversation {
   /** The per-session composer-block registry. */
   readonly blocks: ComposerBlocks
   private readonly draftAttachments = new Map<DraftAttachmentId, ComposerAttachment>()
+  /** Eagerly-read draft bytes (read once at pick time; send never re-reads the file). */
+  private readonly draftBytes = new Map<DraftAttachmentId, Promise<Uint8Array>>()
   private readonly imageUrls = new Map<string, ImageUrlEntry>()
   private readonly imageGenerations = new Map<SessionId, number>()
   private readonly createdImageUrls = new Set<string>()
@@ -115,6 +117,7 @@ export class ConversationController extends Service implements IConversation {
       for (const url of this.createdImageUrls) revokePreview(url)
       this.createdImageUrls.clear()
       this.draftAttachments.clear()
+      this.draftBytes.clear()
       this.imageUrls.clear()
       this.imageGenerations.clear()
     }, 'conversation attachment URL cache')
@@ -149,7 +152,7 @@ export class ConversationController extends Service implements IConversation {
     if (attachments.length !== imageIds.length) {
       throw new Error('conversation.sendSession: one or more draft images are no longer available')
     }
-    const uploaded = await this.serializeImages(attachments.map(attachment => attachment.file))
+    const uploaded = await this.serializeImages(attachments)
     const content = [...uploaded, ...(text === '' ? [] : [{ type: 'text' as const, text }])]
     const result = await session.prompt(content, mode)
     if (!result.ok) throw new Error(`conversation.send failed: ${result.error.code}: ${result.error.message}`)
@@ -165,7 +168,13 @@ export class ConversationController extends Service implements IConversation {
     for (const file of files) imageMediaType(file.type)
     return files.map((file) => {
       const attachment = browserDraftAttachment(file)
+      // Read the bytes once, at pick time, when the picker grant is still
+      // fresh: Android content:// URIs can reject a later re-read at send
+      // time, so the send serializes from this cached read instead.
+      const bytes = readFileBytes(file)
+      void bytes.catch(() => {}) // rejection surfaces at send, never an unhandled one here
       this.draftAttachments.set(attachment.id, attachment)
+      this.draftBytes.set(attachment.id, bytes)
       this.createdImageUrls.add(attachment.previewUrl)
       return attachment
     })
@@ -193,6 +202,7 @@ export class ConversationController extends Service implements IConversation {
     const attachment = this.draftAttachments.get(id)
     if (attachment === undefined) return
     this.draftAttachments.delete(id)
+    this.draftBytes.delete(id)
     this.createdImageUrls.delete(attachment.previewUrl)
     revokePreview(attachment.previewUrl)
   }
@@ -313,13 +323,19 @@ export class ConversationController extends Service implements IConversation {
   }
 
   /** Convert browser files to canonical base64 prompt parts. */
-  private serializeImages(images: readonly File[]): Promise<Parameters<SessionFace['prompt']>[0]> {
-    return Promise.all(images.map(async file => ({
-      type: 'image' as const,
-      mediaType: imageMediaType(file.type),
-      data: bytesToBase64(new Uint8Array(await file.arrayBuffer())),
-      ...(file.name === '' ? {} : { name: file.name }),
-    })))
+  private serializeImages(attachments: readonly ComposerAttachment[]): Promise<Parameters<SessionFace['prompt']>[0]> {
+    return Promise.all(attachments.map(async attachment => {
+      const bytes = await this.draftBytes.get(attachment.id)
+      if (bytes === undefined) {
+        throw new Error('conversation.sendSession: one or more draft images are no longer available')
+      }
+      return {
+        type: 'image' as const,
+        mediaType: imageMediaType(attachment.file.type),
+        data: bytesToBase64(bytes),
+        ...(attachment.file.name === '' ? {} : { name: attachment.file.name }),
+      }
+    }))
   }
 }
 
@@ -333,6 +349,16 @@ function imageMediaType(value: string): ImageMediaType {
     default:
       throw new UnsupportedImageMediaTypeError(value)
   }
+}
+
+/**
+ * Read a File's bytes once, at pick time. Serialization never re-reads the
+ * file: Android pickers hand back a file whose content URI can reject a
+ * second read at send time, so the bytes are captured while the picker grant
+ * is still fresh. A throw here is the caller's send failure.
+ */
+function readFileBytes(file: File): Promise<Uint8Array> {
+  return file.arrayBuffer().then(buffer => new Uint8Array(buffer))
 }
 
 function bytesToBase64(data: Uint8Array): string {

@@ -222,4 +222,42 @@ describe('InputHub queue steering (empty-draft accelerated Enter)', () => {
     expect(b.updateQueue).not.toHaveBeenCalled()
     await b.runtime.dispose()
   })
+
+  it('sends with bytes captured at pick time despite a later re-read failure', async () => {
+    const b = await bench()
+    const file = new File([Uint8Array.of(1, 2, 3)], 'pixel.png', { type: 'image/png' })
+    // Eager read at pick time succeeds and caches the bytes.
+    const [attachment] = b.scoped.createDraftImages([file])
+    // A later re-read (Android content:// URI at send time) would fail.
+    file.arrayBuffer = () => Promise.reject(new DOMException('NotFoundError'))
+    b.shell.actions.addImages([attachment.id])
+    b.shell.actions.submit()
+    await vi.waitFor(() => {
+      expect(b.prompt).toHaveBeenCalledWith(
+        [{ type: 'image', mediaType: 'image/png', data: 'AQID', name: 'pixel.png' }],
+        'queue',
+      )
+    })
+    expect(b.shell.notices.getSnapshot()).toBeNull()
+    await b.runtime.dispose()
+  })
+
+  it('surfaces a client-side send failure as a notice instead of a silent no-op', async () => {
+    const b = await bench()
+    const file = new File([Uint8Array.of(1, 2, 3)], 'pixel.png', { type: 'image/png' })
+    // The eager read itself fails (simulating an unreadable pick).
+    file.arrayBuffer = () => Promise.reject(new DOMException('NotFoundError'))
+    const [attachment] = b.scoped.createDraftImages([file])
+    b.shell.actions.addImages([attachment.id])
+    b.shell.actions.submit()
+    await vi.waitFor(() => {
+      const notice = b.shell.notices.getSnapshot()
+      expect(notice).not.toBeNull()
+      expect(notice?.level).toBe('error')
+      expect(notice?.text).toContain('NotFoundError')
+    })
+    // No RPC was made — the failure is purely client-side.
+    expect(b.prompt).not.toHaveBeenCalled()
+    await b.runtime.dispose()
+  })
 })
