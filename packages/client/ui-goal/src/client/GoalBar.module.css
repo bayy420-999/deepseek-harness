@@ -14,6 +14,9 @@
     var(--dsh-composer-dock-inset)
   );
   margin: 0 auto;
+  /* Anonymous inline-size container: the narrow-card label rule below
+     queries this dock's own width, not the viewport. */
+  container-type: inline-size;
 }
 
 .bar {
@@ -124,4 +127,13 @@
 .iconBtn:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* Phone-width cards: the phase label yields its width to the objective —
+   the bar's identity text. The glyph and the pause/resume action still
+   communicate the phase, and the whole objective rides the bar's title. */
+@container (max-width: 420px) {
+  .label {
+    display: none;
+  }
 }

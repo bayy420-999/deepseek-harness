@@ -34,3 +34,15 @@
 .sessionLogButton span {
   white-space: nowrap;
 }
+
+@media (max-width: 720px) {
+  .sessionLogButton {
+    min-width: 32px;
+    width: 32px;
+    padding: 0;
+  }
+
+  .sessionLogButton span {
+    display: none;
+  }
+}

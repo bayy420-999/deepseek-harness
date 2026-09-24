@@ -159,10 +159,15 @@
   text-overflow: ellipsis;
 }
 
-/* Content column (figma Content 501:29980): header + options. */
+/* Content column (figma Content 501:29980): header + options. The zero
+   min-height is what lets the column shrink inside the stacked mobile panel
+   (flex-direction: column); without it the flex item's automatic minimum
+   keeps it as tall as `.options`' content, and the panel's overflow:hidden
+   clips the overflow instead of scrolling `.options`. */
 .content {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -223,4 +228,64 @@
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
+}
+
+/* Phone-width viewports (ui-layout's MOBILE_OVERLAY_MAX and below): the fixed
+   188px nav rail would leave the content column ~150px wide inside the
+   viewport-capped panel, so the panel stacks — the nav becomes a full-width
+   horizontal tab strip and the options take the whole width. Tighter gutters
+   and the dynamic-viewport height keep the panel on-screen under mobile
+   browser chrome. */
+@media (max-width: 720px) {
+  .panel {
+    flex-direction: column;
+    width: 100%;
+    max-width: calc(100vw - 32px);
+    height: min(800px, calc(100vh - 32px));
+  }
+
+  @supports (height: 100dvh) {
+    .panel {
+      height: min(800px, calc(100dvh - 32px));
+    }
+  }
+
+  .nav {
+    flex: none;
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    padding: 12px 12px 0;
+    overflow-x: auto;
+    /* The shared scrollbar rebinding: the strip's horizontal bar stays
+       invisible without changing the tab layout. */
+    --dsh-scrollbar-thumb: transparent;
+    --dsh-scrollbar-thumb-hover: transparent;
+  }
+
+  .navTitle {
+    display: none;
+  }
+
+  .navList {
+    flex: 1;
+    flex-direction: row;
+    gap: 4px;
+  }
+
+  .navCell {
+    flex: none;
+    height: 36px;
+    padding: 6px 12px;
+  }
+
+  .header {
+    height: 46px;
+    padding: 12px 12px 4px;
+  }
+
+  .options {
+    padding: 0 16px 16px;
+  }
 }

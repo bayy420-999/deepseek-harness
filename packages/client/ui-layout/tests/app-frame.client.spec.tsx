@@ -11,7 +11,7 @@
  * resizes are driven through the ResizeObserver stub.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, render } from '@testing-library/react'
+import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { useSyncExternalStore } from 'react'
 import { AppFrame } from '@deepseek-ai/dsh-client-ui-layout/src/client/AppFrame.tsx'
 import type { AppFrameProps } from '@deepseek-ai/dsh-client-ui-layout/src/client/AppFrame.tsx'
@@ -325,6 +325,101 @@ describe('AppFrame — narrow-viewport auto-collapse', () => {
     frameWidth = 1920
     act(() => { fireResize?.(); vi.advanceTimersByTime(20) })
     expect(tracks(frame)).toEqual([400, 0])
+  })
+})
+
+describe('AppFrame — mobile overlay mode', () => {
+  it('mounts with only the rail track below the mobile breakpoint', () => {
+    frameWidth = 640
+    const { frame, slotCalls } = mountFrame()
+    expect(tracks(frame)).toEqual([SIDEBAR_COLLAPSED, 0])
+    expect(frame.hasAttribute('data-sidebar-collapsed')).toBe(true)
+    expect(slotCalls.filter(c => c.key === 'sidebar').at(-1)!.props).toEqual({ collapsed: true, width: SIDEBAR_COLLAPSED })
+    expect(frame.querySelectorAll('[class*="handle"]')).toHaveLength(0)
+    expect(frame.querySelector('[class*="drawer"]')).toBeNull()
+    expect(frame.querySelector('[class*="scrim"]')).toBeNull()
+    expect(frame.querySelector('[class*="detailsOverlay"]')).toBeNull()
+  })
+
+  it('toggle opens the sidebar as an overlay drawer without squeezing the center', () => {
+    frameWidth = 640
+    const { frame, instance, slotCalls } = mountFrame()
+    act(() => { instance.actions.toggleSidebar() })
+    expect(tracks(frame)).toEqual([SIDEBAR_COLLAPSED, 0])
+    expect(frame.hasAttribute('data-sidebar-collapsed')).toBe(false)
+    expect(frame.querySelector('[class*="drawer"]')).not.toBeNull()
+    expect(frame.querySelector('[class*="scrim"]')).not.toBeNull()
+    expect(frame.querySelectorAll('[class*="handle"]')).toHaveLength(0)
+    const lastSidebarCall = slotCalls.filter(c => c.key === 'sidebar').at(-1)!
+    expect(lastSidebarCall.props).toEqual({ collapsed: false, width: 320 })
+  })
+
+  it('clamps the drawer width to the viewport minus the chat-edge clearance', () => {
+    frameWidth = 360
+    const { instance, slotCalls } = mountFrame()
+    act(() => { instance.actions.toggleSidebar() })
+    expect(slotCalls.filter(c => c.key === 'sidebar').at(-1)!.props).toEqual({ collapsed: false, width: 296 })
+  })
+
+  it('scrim tap closes the drawer', () => {
+    frameWidth = 640
+    const { frame, instance } = mountFrame()
+    act(() => { instance.actions.toggleSidebar() })
+    const scrim = frame.querySelector('[class*="scrim"]')
+    expect(scrim).not.toBeNull()
+    act(() => { fireEvent.click(scrim!) })
+    expect(instance.getSnapshot().narrowExpanded).toBe(false)
+    expect(frame.querySelector('[class*="drawer"]')).toBeNull()
+    expect(frame.hasAttribute('data-sidebar-collapsed')).toBe(true)
+  })
+
+  it('open details renders as a full-frame overlay instead of a zero-width column', () => {
+    frameWidth = 640
+    const { frame, instance, getByTestId } = mountFrame()
+    act(() => { instance.actions.openDetails() })
+    expect(tracks(frame)).toEqual([SIDEBAR_COLLAPSED, 0])
+    expect(frame.querySelector('[class*="detailsOverlay"]')).not.toBeNull()
+    expect(getByTestId('details-content')).toBeTruthy()
+    expect(frame.hasAttribute('data-details-collapsed')).toBe(false)
+    expect(frame.querySelectorAll('[class*="handle"]')).toHaveLength(0)
+  })
+
+  it('closeDetails drops the overlay and re-collapses the frame attribute', () => {
+    frameWidth = 640
+    const { frame, instance } = mountFrame()
+    act(() => { instance.actions.openDetails() })
+    act(() => { instance.actions.closeDetails() })
+    expect(frame.querySelector('[class*="detailsOverlay"]')).toBeNull()
+    expect(frame.hasAttribute('data-details-collapsed')).toBe(true)
+    expect(tracks(frame)).toEqual([SIDEBAR_COLLAPSED, 0])
+  })
+
+  it('leaving mobile mode with the drawer open restores the column layout', () => {
+    frameWidth = 640
+    const { frame, instance } = mountFrame()
+    act(() => { instance.actions.toggleSidebar() })
+    frameWidth = 980
+    act(() => { fireResize?.(); vi.advanceTimersByTime(20) })
+    expect(frame.querySelector('[class*="drawer"]')).toBeNull()
+    expect(frame.querySelector('[class*="scrim"]')).toBeNull()
+    expect(tracks(frame)).toEqual([280, 0])
+    expect(frame.hasAttribute('data-sidebar-collapsed')).toBe(false)
+    expect(frame.querySelectorAll('[class*="handle"]')).toHaveLength(1)
+  })
+
+  it('leaving mobile mode with details open restores the column posture (slot stays mounted)', () => {
+    frameWidth = 640
+    const { frame, instance, getByTestId } = mountFrame()
+    act(() => { instance.actions.openDetails() })
+    frameWidth = 980
+    act(() => { fireResize?.(); vi.advanceTimersByTime(20) })
+    expect(frame.querySelector('[class*="detailsOverlay"]')).toBeNull()
+    expect(getByTestId('details-content')).toBeTruthy()
+    // Narrow concession still owns the rendered width: the rail (56) plus the
+    // 640 center floor cannot host the details column at 980, so the chain
+    // auto-closes it again without touching the stored preference.
+    expect(tracks(frame)).toEqual([SIDEBAR_COLLAPSED, 0])
+    expect(frame.hasAttribute('data-details-collapsed')).toBe(true)
   })
 })
 

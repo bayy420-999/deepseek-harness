@@ -6,14 +6,16 @@
  * renders HERE with live parameters from the concession solve, and the
  * session-aware occupants render in fixed column positions; strict entries
  * gate themselves on current-session availability while session-maybe
- * entries retain identity. Pure component: everything arrives
- * through the three framework shares — zero cordis or framework imports,
- * zero self-made hooks.
+ * entries retain identity. Below MOBILE_OVERLAY_MAX the grid keeps only the
+ * collapsed rail track and the expanded sidebar / open details render as
+ * overlays (AppFrame.module.css) instead of squeezing the center. Pure
+ * component: everything arrives through the three framework shares — zero
+ * cordis or framework imports, zero self-made hooks.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { PropsRenderSlots, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
-import { computeColumns, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_DEFAULT } from './columns.ts'
+import { computeColumns, MOBILE_OVERLAY_MAX, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_DEFAULT, SIDEBAR_DRAWER_WIDTH } from './columns.ts'
 import type { createLayoutStore } from './stores.ts'
 import css from './AppFrame.module.css'
 
@@ -28,9 +30,16 @@ function CenterColumn(props: { children?: ReactNode }) {
   return <div className={css.centerCol}>{props.children}</div>
 }
 
-/** Details column grid item; width 0 keeps the subtree mounted (never unmount on close). */
-function DetailsColumn(props: { children?: ReactNode }) {
-  return <div className={css.detailsCol}>{props.children}</div>
+/** Details column grid item; width 0 keeps the subtree mounted (never unmount on
+ * close). In mobile overlay mode the same container becomes the full-frame
+ * overlay panel (overlay class) so the slot subtree stays mounted across the
+ * posture swap. */
+function DetailsColumn(props: { children?: ReactNode; overlay?: boolean }) {
+  return (
+    <div className={props.overlay === true ? `${css.detailsCol} ${css.detailsOverlay}` : css.detailsCol}>
+      {props.children}
+    </div>
+  )
 }
 
 /**
@@ -136,10 +145,25 @@ export function AppFrame({
   const narrow = viewport < SIDEBAR_AUTO_COLLAPSE
   useEffect(() => { actions.setNarrow(narrow) }, [actions, narrow])
   const sidebarCollapsed = narrow ? !panels.narrowExpanded : panels.sidebar === 0
+  // Mobile overlay mode (below MOBILE_OVERLAY_MAX): the grid carries only
+  // the collapsed rail and the center — the expanded sidebar renders as an
+  // overlay drawer and open details as a full-frame overlay panel, so the
+  // center never concedes width to either. The stored preferences are
+  // untouched, so re-widening restores the ordinary columns.
+  const mobile = viewport < MOBILE_OVERLAY_MAX
+  const drawerOpen = mobile && !sidebarCollapsed
+  const drawerWidth = Math.max(0, Math.min(SIDEBAR_DRAWER_WIDTH, viewport - 64))
   const sidebarPreference = sidebarCollapsed
     ? 0
     : panels.sidebar === 0 ? SIDEBAR_DEFAULT : panels.sidebar
-  const cols = computeColumns(viewport, sidebarPreference, detailsSession === undefined ? 0 : panels.details)
+  const cols = computeColumns(
+    viewport,
+    mobile ? 0 : sidebarPreference,
+    mobile || detailsSession === undefined ? 0 : panels.details,
+  )
+  const detailsOpen = detailsSession !== undefined && panels.details > 0
+  const detailsRenderedOpen = mobile ? detailsOpen : cols.details > 0
+  const sidebarWidth = drawerOpen ? drawerWidth : cols.sidebar
   const colsRef = useRef(cols)
   colsRef.current = cols
 
@@ -167,10 +191,16 @@ export function AppFrame({
       className={css.frame}
       style={{ gridTemplateColumns: `${cols.sidebar}px minmax(0, 1fr) ${cols.details}px` }}
       data-sidebar-collapsed={sidebarCollapsed || undefined}
-      data-details-collapsed={cols.details === 0 || undefined}
+      data-details-collapsed={!detailsRenderedOpen || undefined}
       data-dragging={dragging || undefined}
     >
-      <div className={css.sidebarCol}>
+      {/* Mobile drawer: the same column container becomes an absolute overlay
+          at the drawer width, so the slot subtree stays mounted across the
+          posture swap; the grid keeps the empty rail track behind it. */}
+      <div
+        className={drawerOpen ? `${css.sidebarCol} ${css.sidebarDrawer}` : css.sidebarCol}
+        style={drawerOpen ? { width: drawerWidth } : undefined}
+      >
         {/* Render-site slot call with live concession output: a closed
             sidebar keeps the mounted slot at the compact-rail width, and the
             component sees its rendered state as owner params decided here
@@ -178,7 +208,7 @@ export function AppFrame({
             renders the rail UI too). */}
         {renderSlot('sidebar', {
           collapsed: sidebarCollapsed,
-          width: cols.sidebar,
+          width: sidebarWidth,
         })}
       </div>
       <>
@@ -188,14 +218,24 @@ export function AppFrame({
             is session-maybe; the strict details entry naturally renders
             empty while no session is current. */}
         <CenterColumn>{renderSlot('conversation', {})}</CenterColumn>
-        <DetailsColumn>{renderSlot('details', {})}</DetailsColumn>
+        <DetailsColumn overlay={mobile && detailsOpen}>{renderSlot('details', {})}</DetailsColumn>
       </>
+      {/* Tap-to-close backdrop behind the mobile drawer (the drawer itself
+          stays above it); rendered only while the drawer is open. */}
+      {drawerOpen && (
+        <div
+          className={css.scrim}
+          aria-hidden
+          onClick={() => { actions.toggleSidebar() }}
+        />
+      )}
       <div className={css.overlayLayer} data-shell-overlay>
         {renderSlot('shell.overlay', {})}
       </div>
-      {/* The collapsed rail is fixed-width: no resize handle while closed. */}
-      {!sidebarCollapsed && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
-      {cols.details > 0 && <DragHandle side="details" left={viewport - cols.details} onStart={onDetailsStart} onDrag={onDetailsDrag} onEnd={onDragEnd} />}
+      {/* The collapsed rail is fixed-width: no resize handle while closed.
+          Mobile overlay mode has no grid-resizable columns at all. */}
+      {!mobile && !sidebarCollapsed && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
+      {!mobile && cols.details > 0 && <DragHandle side="details" left={viewport - cols.details} onStart={onDetailsStart} onDrag={onDetailsDrag} onEnd={onDragEnd} />}
     </div>
   )
 }

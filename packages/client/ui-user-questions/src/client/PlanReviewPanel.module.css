@@ -107,6 +107,9 @@
   color: var(--dsw-alias-label-primary);
 }
 
+/* Phone widths (ui-layout's MOBILE_OVERLAY_MAX and below): the card rounds
+   its corners and the body and footer paddings tighten for the narrow
+   column. */
 @media (max-width: 720px) {
   .card {
     border-radius: 16px;
