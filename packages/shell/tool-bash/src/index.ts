@@ -86,6 +86,8 @@ function bashDescription(backgroundEnabled: boolean, escalationModes: readonly S
     + 'plus a one-sentence `justification`. Do not detour through chat to ask permission first — the '
     + 'approval prompt raised by that retry is how the user consents. If the session states approval '
     + 'prompts are disabled, there is no exception: a denial is final — do not set `sandbox_permissions`. '
+    + '`danger-full-access` is the widest mode: when the session already runs under it, omit '
+    + '`sandbox_permissions` entirely — any value fails as not strictly wider. '
     + 'Never escalate speculatively: ground the request in a real denial — normally the one this command '
     + 'just hit; escalating up front is fine only when this session already denied the same access. '
     + 'A rejected escalation is final for that command — stop and explain, never work around '
