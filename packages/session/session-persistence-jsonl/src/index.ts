@@ -9,7 +9,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { readdirSync } from 'node:fs'
-import { open, mkdir, readFile, readdir, realpath, link, rm, stat, truncate } from 'node:fs/promises'
+import { open, mkdir, readFile, readdir, realpath, link, rename, rm, stat, truncate } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { scheduler } from 'node:timers/promises'
@@ -548,6 +548,21 @@ export class JsonlSessionPersistence extends SessionPersistence implements Persi
     try {
       await link(tmp, finalPath)
       linked = true
+    } catch (error) {
+      // Some filesystems / sandboxes (e.g. Android SELinux) deny hard links
+      // entirely. Fall back to a no-clobber rename: rename() would silently
+      // overwrite a concurrent publisher, so re-check existence first to keep
+      // the single-writer guarantee where possible.
+      if (error && (error as NodeJS.ErrnoException).code !== undefined &&
+          ['EACCES', 'EPERM', 'ENOTSUP', 'ENOSYS'].includes((error as NodeJS.ErrnoException).code!)) {
+        if (await this.exists(finalPath)) {
+          throw new Error(`refusing to materialize "${id}": a log already exists on disk (load/resume it instead)`)
+        }
+        await rename(tmp, finalPath)
+        linked = true
+      } else {
+        throw error
+      }
     } finally {
       // Remove an unpublished temp on failure. After publication, defer cleanup
       // until the directory entry is durable so cleanup cannot reject a live log.
