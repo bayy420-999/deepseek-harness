@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { constants } from 'node:fs'
+import { closeSync, constants, openSync } from 'node:fs'
 import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, parse, resolve } from 'node:path'
@@ -61,6 +61,18 @@ function parentChainToRoot(path: string): string[] {
   while (level !== root) {
     level = dirname(level)
     parents.push(level)
+    // The durability walk stops at the first ancestor this process cannot
+    // open (Android SELinux denies opening /data/data even though stat
+    // succeeds); probe with the real fs to mirror that platform boundary.
+    let fd: number | undefined
+    try {
+      fd = openSync(level, constants.O_RDONLY)
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && ['EACCES', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) break
+      throw error
+    } finally {
+      if (fd !== undefined) closeSync(fd)
+    }
   }
   return parents
 }

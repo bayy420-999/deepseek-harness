@@ -2,7 +2,7 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { chmod, link, mkdir, open, readFile, unlink } from 'node:fs/promises'
+import { chmod, link, mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
 import { dirname, join, parse, resolve } from 'node:path'
 import {
   AttachmentError,
@@ -105,7 +105,14 @@ async function ensureDurableDirectory(path: string, boundary: string): Promise<v
   let level = target
   while (level !== stop) {
     const parent = dirname(level)
-    await syncDirectory(parent)
+    try {
+      await syncDirectory(parent)
+    } catch (error) {
+      /* v8 ignore start -- a permission boundary (e.g. Android SELinux blocking open of /data/data) is unreachable on CI hosts that can open every ancestor. */
+      if (error instanceof Error && 'code' in error && ['EACCES', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) return
+      throw error
+      /* v8 ignore stop */
+    }
     /* v8 ignore next -- filesystem-root guard: callers pass a boundary that is an ancestor of path, so the walk reaches it first. */
     if (parent === level) return
     level = parent
@@ -158,9 +165,29 @@ export async function saveImageFile(root: string, input: SaveImageAttachment, li
       await link(temporary, target)
     } catch (error) {
       /* v8 ignore next -- Private same-filesystem directories make EEXIST the only recoverable link race. */
-      if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error
-      const existing = new Uint8Array(await readFile(target))
-      if (digest(existing) !== sha256) throw new AttachmentError('Stored attachment failed integrity verification.', 'ATTACHMENT_CORRUPT')
+      if (error instanceof Error && 'code' in error && error.code === 'EEXIST') {
+        const existing = new Uint8Array(await readFile(target))
+        if (digest(existing) !== sha256) throw new AttachmentError('Stored attachment failed integrity verification.', 'ATTACHMENT_CORRUPT')
+      } else if (error instanceof Error && 'code' in error && ['EACCES', 'EPERM', 'ENOTSUP', 'ENOSYS'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+        // Hard links denied (e.g. Android SELinux): fall back to rename. The
+        // target may still exist from a concurrent writer, so verify integrity
+        // instead of clobbering it.
+        let targetExists = false
+        try {
+          await readFile(target)
+          targetExists = true
+        } catch {
+          /* target absent -- fall through to rename */
+        }
+        if (targetExists) {
+          const existing = new Uint8Array(await readFile(target))
+          if (digest(existing) !== sha256) throw new AttachmentError('Stored attachment failed integrity verification.', 'ATTACHMENT_CORRUPT')
+        } else {
+          await rename(temporary, target)
+        }
+      } else {
+        throw error
+      }
     }
     // Persist the target entry and close a concurrent bucket-creation window
     // before the reference can reach a session checkpoint. The dedup path
@@ -168,7 +195,14 @@ export async function saveImageFile(root: string, input: SaveImageAttachment, li
     // that writer reaches its own durability boundary.
     await syncDirectory(bucket)
     await syncDirectory(join(root, 'objects'))
-    await unlink(temporary)
+    // After a rename fallback the temporary is already gone; ENOENT here is
+    // the success path, not a cleanup failure.
+    await unlink(temporary).catch(
+      (cleanupError: unknown) => {
+        /* v8 ignore next -- The callback requires a second independent staging-unlink failure. */
+        if (!(cleanupError instanceof Error && 'code' in cleanupError && cleanupError.code === 'ENOENT')) throw cleanupError
+      },
+    )
   } catch (error) {
     /* v8 ignore next -- A descriptor can remain open only when the underlying write/sync/close operation fails. */
     if (handle !== undefined) await handle.close().catch(
