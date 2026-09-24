@@ -92,7 +92,10 @@ function npmPackageOf(id: string): string | undefined {
 export default defineConfig({
   plugins: [rejectStandaloneServe(), react()],
   build: {
-    sourcemap: true,
+    // Production builds ship NO sourcemaps: maps are 56% of the shipped dist
+    // (6.7MB of 12MB on the reference build) and mobile browsers never fetch
+    // them. Re-enable for a debugging build with `vite build --sourcemap`.
+    sourcemap: false,
     rollupOptions: {
       output: {
         // Output layout: the two main chunks stay at assets/ root; lazy

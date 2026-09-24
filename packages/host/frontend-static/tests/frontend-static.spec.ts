@@ -32,11 +32,13 @@ async function loadComposition(): Promise<Context> {
   root = await mkdtemp(join(tmpdir(), 'dsh-frontend-static-'))
   const dist = join(root, 'dist')
   await mkdir(dist)
+  await mkdir(join(dist, 'assets'))
   const distIndex = join(dist, 'index.html')
   await writeFile(distIndex, '<head></head><body>shell</body>')
   await writeFile(join(dist, 'app.js'), 'export {}')
   await writeFile(join(dist, 'blob.bin'), 'BLOB')
   await writeFile(join(dist, 'manifest.webmanifest'), '{}')
+  await writeFile(join(dist, 'assets', 'app-12345678.js'), 'export const hashed = true')
   const configPath = join(root, 'cordis.yml')
   await writeFile(configPath, [
     "- name: '@deepseek-ai/dsh-host-webserver'",
@@ -73,13 +75,16 @@ async function loadComposition(): Promise<Context> {
   return context
 }
 
-/** GET (by default) one path against the running server; returns status, content-type, and a body prefix. */
-async function request(port: number, path: string, init?: RequestInit): Promise<{ status: number; type: string | null; body: string }> {
+/** GET (by default) one path against the running server; returns status, content-type, headers, and a body prefix. */
+async function request(port: number, path: string, init?: RequestInit): Promise<{
+  status: number; type: string | null; body: string; headers: Headers
+}> {
   const response = await fetch(`http://127.0.0.1:${String(port)}${path}`, init)
   return {
     status: response.status,
     type: response.headers.get('content-type'),
     body: (await response.text()).slice(0, 80),
+    headers: response.headers,
   }
 }
 
@@ -105,6 +110,32 @@ describe('real Loader composition', () => {
 
     // Unknown extension ships as octet-stream.
     expect(await request(port, '/blob.bin')).toMatchObject({ status: 200, type: 'application/octet-stream', body: 'BLOB' })
+
+    // Compression + caching: hashed assets compress on request (gzip or
+    // brotli, negotiated) and are immutable for a year; index responses are
+    // no-cache and identity. The decoded body must always match the file.
+    const compressed = await request(port, '/assets/app-12345678.js', {
+      headers: { 'accept-encoding': 'gzip' },
+    })
+    expect(compressed.status).toBe(200)
+    expect(compressed.body).toBe('export const hashed = true')
+    expect(compressed.headers.get('content-encoding')).toBe('gzip')
+    expect(compressed.headers.get('vary')).toBe('accept-encoding')
+    expect(compressed.headers.get('cache-control')).toBe('public, max-age=31536000, immutable')
+    // A second request reuses the compressed copy (same body, still decodable).
+    expect((await request(port, '/assets/app-12345678.js', {
+      headers: { 'accept-encoding': 'gzip' },
+    })).body).toBe('export const hashed = true')
+
+    // Identity when the client does not negotiate a supported encoding.
+    const identity = await request(port, '/app.js', { headers: { 'accept-encoding': 'identity' } })
+    expect(identity.headers.get('content-encoding')).toBeNull()
+    expect(identity.body).toBe('export const rebuilt = true')
+
+    // index.html (through the taps) is served no-cache and uncompressed.
+    const index = await request(port, '/')
+    expect(index.headers.get('cache-control')).toBe('no-cache')
+    expect(index.headers.get('content-encoding')).toBeNull()
 
     // `/`, the index path, and any miss all render index.html (SPA routing)
     // through the registered index taps.

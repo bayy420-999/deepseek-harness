@@ -64,6 +64,16 @@ const RUNTIME_STORE_EXEMPTION = '@deepseek-ai/dsh-client-runtime/client'
 /** Externals resolved from the loader module table: the platform seed entries plus the documented runtime exemption. */
 export const CLIENT_EXTERNALS: readonly string[] = [...PLATFORM_MODULES, RUNTIME_STORE_EXEMPTION]
 
+/**
+ * CSS targets applied to every client-bundle CSS Module transform. Set to
+ * Chrome 90 to emit classic (max-width:…) syntax instead of the modern
+ * (width<=…) range syntax, which older WebViews (Chromium < 104) do not
+ * parse and silently drop. The target is deliberately conservative: range
+ * syntax is a progressive enhancement for the model preset, not the product
+ * CSS — the 720px phone breakpoint must work on every supported shell.
+ */
+const CSS_TARGETS = { chrome: 90 }
+
 const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url))
 
 /** Rebase a physical lib-relative source onto a browser URL that mirrors the repository directories. */
@@ -240,6 +250,7 @@ function clientConfig(id: string, entry: string): UserConfig {
           filename: fileId,
           code: source,
           cssModules: { pattern: '[hash]_[local]' },
+          targets: CSS_TARGETS,
           minify: true,
         })
         const classMap: Record<string, string> = {}

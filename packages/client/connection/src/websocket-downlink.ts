@@ -49,7 +49,15 @@ function failureFrame(error: unknown): RpcRequest<Frame> {
  * remains on HTTP.
  */
 export class WebSocketDownlinks {
-  private readonly server = new WebSocketServer({ noServer: true })
+  private readonly server = new WebSocketServer({
+    noServer: true,
+    // permessage-deflate (RFC 7692): the two event streams carry repeated
+    // session/event JSON (tool results, terminal rows, deltas); deflating
+    // large frames cuts wire bytes on mobile links. The `ws` default
+    // `threshold: 1024` leaves small frames untouched, bounding CPU cost.
+    // Browsers negotiate the extension automatically when the server offers it.
+    perMessageDeflate: true,
+  })
   private readonly pumps = new Set<Promise<void>>()
 
   /** @param api - host API supplying the typed event streams. */
