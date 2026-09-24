@@ -79,9 +79,26 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
+  flex: 0 1 auto;
+  /* Ancestor crumbs cap on the seg (the separator shares the seg), so the
+     shrink and the ellipsis have one width authority; the current seg has no
+     cap and takes the remaining row instead of clamping at a fixed width. */
+  max-width: 220px;
+}
+
+/* Ancestors yield their width three times faster than the current crumb, so
+   the running session's title keeps its text until the chain is squeezed to
+   nothing; every seg can still shrink to its ellipsis floor. */
+.crumbSeg:not(:last-child) {
+  flex-shrink: 3;
+}
+
+.crumbSeg:last-child {
+  max-width: none;
 }
 
 .crumbSep {
+  flex: none;
   /* figma: "/" separators are 14px caption gray (75:7903), one tint lighter than crumb text. */
   color: var(--dsw-alias-label-caption);
   font-size: 14px;
@@ -89,7 +106,8 @@
 }
 
 .crumb {
-  max-width: 220px;
+  min-width: 0;
+  width: 100%;
   overflow: hidden;
   padding: 4px 8px;
   border: none;
@@ -107,7 +125,14 @@
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
+/* Also the bare sessionId fallback span (no seg wrapper): it must shrink
+   with its own ellipsis like the button it stands in for. */
 .crumbCurrent {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 500;
   color: var(--dsw-alias-label-primary);
   cursor: default;
@@ -209,6 +234,16 @@
      elected overlay are siblings — and custom properties inherit down to
      whichever entry is mounted. */
   --dsh-composer-text-max-height: 336px;
+}
+
+/* Keyboard open (ConversationRoot publishes data-dsh-keyboard='open' on the
+   root element): the visible viewport is only the strip above the IME, so the
+   fixed 336px text cap would let the draft swallow most of it. Cap the cap to a
+   fraction of the reduced visual viewport (--dsh-viewport-height), so a short
+   draft stays compact while a long draft scrolls inside a smaller window — the
+   composer never dominates the keyboard-open shell. */
+html[data-dsh-keyboard='open'] .composerSeat {
+  --dsh-composer-text-max-height: min(336px, calc(var(--dsh-viewport-height, 100dvh) * 0.38));
 }
 
 /* Active phase: header is ordinary column chrome above the scrollport (not
@@ -362,4 +397,33 @@
    mounted but invisible so no wrong layout flashes before the phase lands. */
 .root[data-phase='settling'] .composerSeat {
   visibility: hidden;
+}
+
+/* Phone-width columns (ui-layout's MOBILE_OVERLAY_MAX and below): the
+   breadcrumb title is dropped entirely — it truncates to unreadability there —
+   the mode label leads the row, and the icon triggers behind it right-align
+   into the utility group. The selector rides the slot's own child shape (the
+   preset label is the only span child) so no cross-plugin id is hardcoded. */
+@media (max-width: 720px) {
+  .header {
+    padding: 12px 16px 0 12px;
+  }
+
+  .crumbs {
+    display: none;
+  }
+
+  .headerActions {
+    /* Fill the title cluster so the auto margin below can actually push the
+       icon triggers against the utility group. */
+    flex: 1;
+  }
+
+  .headerActions > span:first-child {
+    margin-right: auto;
+  }
+
+  .headerUtilities {
+    margin-left: 8px;
+  }
 }

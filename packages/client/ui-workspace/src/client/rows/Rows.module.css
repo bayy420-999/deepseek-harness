@@ -193,7 +193,9 @@
 }
 
 .sessionRow .title {
-  flex: 1;
+  /* Real content basis: the title holds its full width, and the trailing
+     time cell yields first when the column tightens (flex-shrink 6 below). */
+  flex: 1 1 auto;
 }
 
 .meta {
@@ -205,11 +207,19 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* The relative-time cell is secondary chrome: it shrinks six times faster
+   than the title, so the session title — the row's identity text — keeps its
+   width until the time cell is gone; the hover swap to the action buttons is
+   unchanged. */
 .time {
-  flex: none;
+  flex: 0 6 auto;
+  min-width: 0;
+  overflow: hidden;
   font-size: 12px;
   line-height: 20px;
   color: var(--dsw-alias-label-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dot {

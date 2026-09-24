@@ -90,6 +90,7 @@ export function ConversationSessionHeader({
                         type="button"
                         className={clsx(css.crumb, last && css.crumbCurrent)}
                         disabled={last}
+                        title={summary.displayTitle}
                         onClick={() => { open(summary.id) }}
                       >
                         {summary.displayTitle}
