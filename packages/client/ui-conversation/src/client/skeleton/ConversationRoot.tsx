@@ -32,6 +32,59 @@ export function ConversationRoot({
   const [pendingWorkspaceId, setPendingWorkspaceId] = useState<WorkspaceId | undefined>()
   const pickerAnchor = useRef<HTMLButtonElement>(null)
 
+  // Keyboard avoidance on shells whose WebView does not resize the layout
+  // viewport for the on-screen keyboard (interactive-widget is ignored):
+  // track the visual viewport and publish the covered height as
+  // --dsh-keyboard-inset on the root element, flagging data-dsh-keyboard.
+  // base.css then shrinks the app mount to the remaining visual viewport so
+  // the browser does not pan the page (which would scroll the header and
+  // sidebar off-screen); the sticky composer rides the reduced height. A
+  // small offset (address bar, browser chrome) is treated as no keyboard.
+  useEffect(() => {
+    const viewport = window.visualViewport
+    const html = document.documentElement
+    // Loose null: engines without visualViewport expose it as undefined
+    // (jsdom) or null; both mean "no keyboard geometry to track".
+    if (viewport == null) return
+    const update = (): void => {
+      // Detect the keyboard as a shrink of the visual viewport below the
+      // layout (ICB) height. Reporters disagree on whether innerHeight also
+      // shrinks on the IME-active shell, so take the larger of innerHeight and
+      // the documentElement client height (the ICB, which `dvh` resolves to and
+      // which stays fixed in resizes-visual). A fixed threshold separates
+      // browser chrome (< ~100px) from a software keyboard (> ~200px); a ratio
+      // against this tall baseline would miss it.
+      const layoutHeight = Math.max(window.innerHeight, document.documentElement.clientHeight)
+      const inset = layoutHeight - viewport.height
+      const keyboard = inset > 150
+      if (keyboard) {
+        html.style.setProperty('--dsh-keyboard-inset', `${inset}px`)
+        // Size the app mount to the live visual viewport height rather than
+        // `calc(100dvh - var(--dsh-keyboard-inset))`: on the IME-active shell
+        // innerHeight and the ICB can disagree, and `dvh` is a large-viewport
+        // unit, so the subtraction over/under-shoots and leaves a gap between
+        // the composer and the keyboard. The visual viewport IS the visible
+        // area, so its height sizes the app exactly.
+        html.style.setProperty('--dsh-viewport-height', `${viewport.height}px`)
+        html.setAttribute('data-dsh-keyboard', 'open')
+      } else {
+        html.style.setProperty('--dsh-keyboard-inset', '0px')
+        html.style.removeProperty('--dsh-viewport-height')
+        html.removeAttribute('data-dsh-keyboard')
+      }
+    }
+    update()
+    viewport.addEventListener('resize', update)
+    viewport.addEventListener('scroll', update)
+    return () => {
+      viewport.removeEventListener('resize', update)
+      viewport.removeEventListener('scroll', update)
+      html.style.removeProperty('--dsh-keyboard-inset')
+      html.style.removeProperty('--dsh-viewport-height')
+      html.removeAttribute('data-dsh-keyboard')
+    }
+  }, [])
+
   // Publishes the seat's live height as --dsh-composer-height on the scroll
   // body so floating controls (ChatView back-to-bottom) clear the composer as
   // it grows. Callback ref, not an effect; stable identity prevents observer
