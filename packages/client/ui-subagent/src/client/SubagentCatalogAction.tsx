@@ -1,12 +1,12 @@
 import {
-  useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent,
+  useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent,
 } from 'react'
 import {
   indexSubagentDescendants, type SessionId, type SessionListState, type SessionProjectionMap,
   type SessionSummary, type SubagentAddress, type SubagentCatalogSnapshot,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import {
-  IconChevronDownOutline14, IconChevronRightOutline14, IconRefreshOutline14, StateDot,
+  IconBranchOutline16, IconChevronDownOutline14, IconChevronRightOutline14, IconRefreshOutline14, StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { NS } from './locales.ts'
@@ -417,9 +417,11 @@ export function SubagentCatalogAction({
   const summaries = useSessions(state => state.byId)
   const catalog = catalogs[sessionId]
   const [open, setOpen] = useState(false)
+  const [menuOffset, setMenuOffset] = useState({ left: 16 })
   const [now, setNow] = useState(() => Date.now())
   const [expanded, setExpanded] = useState<ReadonlySet<SessionId>>(() => new Set())
   const rootRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const observedCatalogs = useRef(new Set<SessionId>())
   const setCatalogOpenRef = useRef(setCatalogOpen)
@@ -506,6 +508,27 @@ export function SubagentCatalogAction({
     return () => { document.removeEventListener('pointerdown', closeOutside) }
   }, [open])
 
+  // The menu is viewport-fixed (it must escape every clipping column ancestor);
+  // measure it after layout, anchor it under the trigger, and clamp it inside
+  // the visual viewport so it can never bleed off either screen edge on
+  // narrow phones.
+  useLayoutEffect(() => {
+    if (!open) return
+    const measure = (): void => {
+      const menu = menuRef.current
+      if (menu === null) return
+      const bounds = menu.getBoundingClientRect()
+      const viewport = document.documentElement.clientWidth
+      const anchor = triggerRef.current?.getBoundingClientRect().right ?? bounds.width
+      const desired = anchor - bounds.width
+      const left = Math.min(Math.max(desired, 16), Math.max(16, viewport - bounds.width - 16))
+      setMenuOffset({ left })
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => { window.removeEventListener('resize', measure) }
+  }, [open])
+
   useEffect(() => {
     if (!open || descendants.runningCount === 0) return
     const timer = setInterval(() => { setNow(Date.now()) }, 1_000)
@@ -585,11 +608,14 @@ export function SubagentCatalogAction({
         <span className={css.activitySlot}>
           {descendants.runningCount > 0 && <StateDot state="ongoing" />}
         </span>
-        <span className={css.count}>{t(totalCountKey, { count: descendantCount })}</span>
+        {/* The catalog size is chrome, not identity: the branch icon is the
+            trigger's face, and the live counts ride the aria-label and the
+            menu's own rows. */}
+        <IconBranchOutline16 className={css.triggerIcon} />
         <IconChevronDownOutline14 className={open ? css.triggerOpen : undefined} />
       </button>
       {open && (
-        <div className={css.menu} role="tree" aria-label={t('tree.aria')}>
+        <div ref={menuRef} className={css.menu} style={{ left: menuOffset.left }} role="tree" aria-label={t('tree.aria')}>
           <CatalogRows
             parentSessionId={sessionId}
             catalog={presentedCatalog}

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import type { JobView } from '@deepseek-ai/dsh-client-runtime/client'
-import { IconChevronDownOutline14, StateDot, useDismissOnOutsidePointer, type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconQueueOutline14, StateDot, useDismissOnOutsidePointer, type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { NS } from './locales.ts'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -94,14 +94,37 @@ function ordered(jobs: readonly JobView[]): JobView[] {
 export function JobListAction({ sessionId, useSessions, t }: JobListActionProps) {
   const jobs = useSessions(state => state.jobsBySession[sessionId]) ?? NO_TASKS
   const [open, setOpen] = useState(false)
+  const [menuOffset, setMenuOffset] = useState({ left: 16 })
   const [now, setNow] = useState(() => Date.now())
   const rootRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLUListElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
 
   const rows = useMemo(() => ordered(jobs), [jobs])
   const liveCount = useMemo(() => jobs.filter(isLive).length, [jobs])
 
   useDismissOnOutsidePointer(rootRef, open, setOpen)
+
+  // The menu is viewport-fixed (it must escape every clipping column ancestor);
+  // measure it after layout, anchor it under the trigger, and clamp it inside
+  // the visual viewport so it can never bleed off either screen edge on
+  // narrow phones.
+  useLayoutEffect(() => {
+    if (!open) return
+    const measure = (): void => {
+      const menu = menuRef.current
+      if (menu === null) return
+      const bounds = menu.getBoundingClientRect()
+      const viewport = document.documentElement.clientWidth
+      const anchor = triggerRef.current?.getBoundingClientRect().right ?? bounds.width
+      const desired = anchor - bounds.width
+      const left = Math.min(Math.max(desired, 16), Math.max(16, viewport - bounds.width - 16))
+      setMenuOffset({ left })
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => { window.removeEventListener('resize', measure) }
+  }, [open])
 
   // The clock only runs while an open list is showing something that moves.
   useEffect(() => {
@@ -139,6 +162,7 @@ export function JobListAction({ sessionId, useSessions, t }: JobListActionProps)
         className={css.trigger}
         aria-expanded={open}
         aria-label={countLabel}
+        title={countLabel}
         onClick={() => {
           // Sample the clock in the same commit that opens the list: the
           // mount-time value predates every job, so the first painted frame
@@ -149,12 +173,15 @@ export function JobListAction({ sessionId, useSessions, t }: JobListActionProps)
         }}
       >
         {liveCount > 0 ? <StateDot state="ongoing" className={css.triggerDot} /> : null}
-        <span className={css.count}>{countLabel}</span>
-        <IconChevronDownOutline14 className={open ? css.triggerOpen : undefined} />
+        <IconQueueOutline14 className={css.triggerIcon} />
+        {/* The live count is the badge; at zero the icon alone is the quiet
+            entry point into the session's job history (README). The full
+            count label rides the aria-label and the native tooltip. */}
+        {liveCount > 0 ? <span className={css.badge}>{liveCount}</span> : null}
       </button>
       {open
         ? (
-          <ul className={css.menu} aria-label={t('list.aria')}>
+          <ul ref={menuRef} className={css.menu} style={{ left: menuOffset.left }} aria-label={t('list.aria')}>
             {rows.map((job) => {
               const live = isLive(job)
               const elapsed = live ? now - job.startedAt : (job.finishedAt ?? job.startedAt) - job.startedAt

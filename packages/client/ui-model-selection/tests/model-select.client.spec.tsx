@@ -167,6 +167,110 @@ describe('ModelSelect reasoning effort', () => {
     expect(screen.queryByRole('button', { name: '重试' })).toBeNull()
   })
 
+  it('clamps the open menu into the viewport when the trigger sits mid-row', () => {
+    const originalWidth = window.innerWidth
+    // The mocked root rect is a mutable "trigger position" the resize
+    // listener re-reads, proving the menu re-places on reflow.
+    let rootLeft = 137
+    let rootRight = 281
+    const rectSpy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(() => ({
+      left: rootLeft, right: rootRight, top: 0, bottom: 0, width: rootRight - rootLeft, height: 28,
+      x: 0, y: 0, toJSON: () => ({}),
+    }) as unknown as DOMRect)
+    const widthSpy = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(330)
+    try {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 360 })
+      render(<ModelSelect
+        locked={false}
+        available
+        directory={createSnapshotStore(state())}
+        load={vi.fn()}
+        select={vi.fn().mockResolvedValue(true)}
+        t={t}
+      />)
+
+      fireEvent.click(screen.getByRole('button', { name: /选择模型/ }))
+      const menu = screen.getByRole('menu')
+      // Right-anchored the menu would run 49px past the viewport's left
+      // edge (281 - 330 = -49); the clamp pulls it back to the 12px margin.
+      expect(menu.style.left).toBe('-125px')
+      expect(menu.style.right).toBe('auto')
+
+      // The card reflows (resize); the trigger moves right of a now-wider
+      // viewport, so the clamp releases and the menu returns to the CSS
+      // right:0 anchor: menu right edge = root right (543) - width (330)
+      // = 213 viewport px, relative to the root left (400) → -187px.
+      rootLeft = 400
+      rootRight = 543
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 800 })
+      fireEvent(window, new Event('resize'))
+      expect(menu.style.left).toBe('-187px')
+    } finally {
+      rectSpy.mockRestore()
+      widthSpy.mockRestore()
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
+  it('clamps the menu inside its clipping seat and caps its width on narrow cards', () => {
+    const originalWidth = window.innerWidth
+    // The composer seat scroll body clips horizontally (overflow-x: hidden)
+    // at 56..360 on a 360px phone; the trigger chip sits mid-row inside it.
+    let seatLeft = 56
+    let seatRight = 360
+    let root = null as unknown as HTMLElement
+    let seat = null as unknown as HTMLElement
+    const rectSpy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      if (this === seat) {
+        return {
+          left: seatLeft, right: seatRight, top: 0, bottom: 0,
+          width: seatRight - seatLeft, height: 0, x: 0, y: 0, toJSON: () => ({}),
+        } as unknown as DOMRect
+      }
+      return {
+        left: 137, right: 281, top: 0, bottom: 0, width: 144, height: 28,
+        x: 0, y: 0, toJSON: () => ({}),
+      } as unknown as DOMRect
+    })
+    const widthSpy = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(330)
+    try {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 360 })
+      render(<ModelSelect
+        locked={false}
+        available
+        directory={createSnapshotStore(state())}
+        load={vi.fn()}
+        select={vi.fn().mockResolvedValue(true)}
+        t={t}
+      />)
+
+      const trigger = screen.getByRole('button', { name: /选择模型/ })
+      root = trigger.parentElement as HTMLElement
+      seat = root.parentElement as HTMLElement
+      seat.style.overflowX = 'hidden'
+
+      fireEvent.click(trigger)
+      const menu = screen.getByRole('menu')
+      // The 330px menu cannot fit the 304px seat minus 2×12px margins: it
+      // shrinks to 280px and both edges sit 12px inside the seat.
+      expect(menu.style.left).toBe('-69px')
+      expect(menu.style.right).toBe('auto')
+      expect(menu.style.width).toBe('280px')
+      expect(menu.style.boxSizing).toBe('border-box')
+
+      // A reflowed seat (resize) re-places and re-sizes the menu.
+      seatLeft = 100
+      seatRight = 300
+      fireEvent(window, new Event('resize'))
+      expect(menu.style.width).toBe('176px')
+      expect(menu.style.left).toBe('-25px')
+    } finally {
+      rectSpy.mockRestore()
+      widthSpy.mockRestore()
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
   it('renders no Agent-bound control for an addressed subagent session', () => {
     const load = vi.fn()
     render(<ModelSelect

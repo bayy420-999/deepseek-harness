@@ -5,13 +5,15 @@
 
 /* Figma 313:14108 ToggleButton: 13/20 medium secondary label, 4px gap,
    12px caption chevron; 28px chip height matches the sibling Plan /
-   Read-only selects in the same tool row. */
+   Read-only selects in the same tool row. No fixed width cap: the model
+   name sizes to its content and only clamps as the row's last resort — the
+   tools group yields first through its container queries (PermissionSelect),
+   and the trigger's own ellipsis applies only when the row is truly full. */
 .trigger {
   display: flex;
   align-items: center;
   gap: 4px;
   min-width: 0;
-  max-width: 220px;
   height: 28px;
   padding: 0 4px 0 8px;
   border: none;
@@ -46,6 +48,19 @@
   white-space: nowrap;
 }
 
+/* The model glyph: rides inside the trigger before the name (same seat as
+   the permission trigger's shield). Kept at 14px so the chip reads at the
+   same visual size as its sibling modes. */
+.triggerIcon {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.triggerIcon svg {
+  width: 14px;
+  height: 14px;
+}
+
 /* Effort value beside the model name (mock's 'High': same 13/20/500, caption tone). */
 .triggerEffort {
   flex: 0 0 auto;
@@ -69,7 +84,13 @@
   z-index: 20;
   display: flex;
   flex-direction: column;
-  width: min(240px, calc(100vw - 32px));
+  /* 320px fits a full model name plus its description on one line less
+     often; the width cap only bounds the card, the JS placement pass in
+     ModelSelect.tsx (overriding right:0 with a measured left) keeps the
+     whole menu inside its clipping seat — the composer scroll body on
+     phones — and narrows the width with box-sizing: border-box when the
+     seat cannot fit 320px. */
+  width: min(320px, calc(100vw - 32px));
   max-height: min(360px, calc(100vh - 96px));
   overflow: hidden;
   padding: 4px;
@@ -188,23 +209,22 @@
   min-width: 0;
 }
 
+/* Option rows never truncate: the name and its description wrap instead of
+   clamping, so the whole text stays readable; a long row grows the option
+   and the menu's height cap turns the surplus into scroll. */
 .modelName {
-  overflow: hidden;
   color: inherit;
   font-size: 14px;
   line-height: 20px;
   font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: break-word;
 }
 
 .description {
-  overflow: hidden;
   color: var(--dsw-alias-label-tertiary);
   font-size: 12px;
   line-height: 18px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: break-word;
 }
 
 .check {
@@ -248,6 +268,10 @@
 
 .cellValue {
   flex: 0 1 auto;
+  /* Half the row at most: the left label keeps room, and the chevron stays
+     pinned; the surplus truncates with an ellipsis while the full value
+     rides the cell's title tooltip. */
+  max-width: 50%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -258,4 +282,24 @@
 .cellChevron {
   flex: 0 0 auto;
   color: var(--dsw-alias-label-tertiary);
+}
+
+/* Narrow composer cards (the InputBar tool row's anonymous inline-size
+   container): the effort suffix yields its width to the model name, which
+   is the chip's identity — the effort stays reachable in the menu and the
+   trigger's aria-label and title carry it. */
+@container (max-width: 460px) {
+  .triggerEffort {
+    display: none;
+  }
+
+  /* One step narrower still (same cut as the permission trigger): the
+     model name yields too, leaving the sparkle glyph + chevron. The chip's
+     identity rides the title/aria-label and the open menu; without the
+     yield, the name's min-content width crushes the tools group and its
+     permission trigger overlaps the model chip (both overflow their
+     shrunken flex boxes on phone rows). */
+  .trigger:has(.triggerIcon) .triggerLabel {
+    display: none;
+  }
 }

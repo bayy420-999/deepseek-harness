@@ -159,7 +159,7 @@ describe('SubagentCatalogAction', () => {
     expect(input.setCatalogOpen).toHaveBeenLastCalledWith(PARENT, false)
   })
 
-  it('selects singular count keys for one descendant', () => {
+  it('uses the singular running key in the trigger label for one running descendant', () => {
     const base = props(catalog({
       entries: [{
         kind: 'child', id: CHILD, mode: 'continuable', label: 'worker',
@@ -174,7 +174,25 @@ describe('SubagentCatalogAction', () => {
     render(<SubagentCatalogAction {...base} t={translate} />)
 
     expect(translate).toHaveBeenCalledWith('count.running.one', { count: 1 })
+    expect(translate).not.toHaveBeenCalledWith('count.total.one', { count: 1 })
+  })
+
+  it('falls back to the singular total key in the trigger label when nothing runs', () => {
+    const base = props(catalog({
+      entries: [{
+        kind: 'child', id: CHILD, mode: 'continuable', label: 'worker',
+        activity: 'inactive', hasChildren: false,
+      }],
+    }), {}, {
+      [CHILD]: {
+        ...summary(CHILD, Date.now()), parentId: PARENT, origin: 'subagent', running: false,
+      },
+    })
+    const translate = vi.fn(base.t)
+    render(<SubagentCatalogAction {...base} t={translate} />)
+
     expect(translate).toHaveBeenCalledWith('count.total.one', { count: 1 })
+    expect(translate).not.toHaveBeenCalledWith('count.running.one', { count: 1 })
   })
 
   it('removes the disclosure column from branchless catalog levels', () => {
@@ -324,7 +342,10 @@ describe('SubagentCatalogAction', () => {
     const input = props(catalog({ entries }), {}, summaries)
     render(<SubagentCatalogAction {...input} />)
     const trigger = screen.getByRole('button', { name: '1 个子代理，正在运行' })
-    expect(within(trigger).getByText('9 个子代理')).toBeTruthy()
+    // Icon-only trigger: the branch glyph renders, and the count text rides
+    // the accessible name rather than visible chrome.
+    expect(trigger.querySelector('svg')).not.toBeNull()
+    expect(within(trigger).queryByText(/个子代理/)).toBeNull()
     fireEvent.click(trigger)
 
     const runningRow = screen.getByRole('treeitem', { name: /running.*4\.6K tok · 1分10秒/ })
@@ -510,7 +531,8 @@ describe('SubagentCatalogAction', () => {
     const view = render(<SubagentCatalogAction {...absent} />)
 
     const trigger = screen.getByRole('button', { name: '1 个子代理，正在运行' })
-    expect(within(trigger).getByText('2 个子代理')).toBeTruthy()
+    expect(trigger.querySelector('svg')).not.toBeNull()
+    expect(within(trigger).queryByText(/个子代理/)).toBeNull()
     fireEvent.click(trigger)
     expect(absent.setCatalogOpen).toHaveBeenCalledWith(PARENT, true)
     expect(screen.getAllByRole('treeitem', { name: '正在加载子代理' })).toHaveLength(2)

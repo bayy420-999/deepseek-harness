@@ -12,14 +12,14 @@
  * card; the in-menu strip with Retry remains the catalog-load surface.
  */
 import {
-  useEffect, useId, useMemo, useRef, useState, useSyncExternalStore,
+  useLayoutEffect, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore,
   type KeyboardEvent, type FocusEvent,
 } from 'react'
 import clsx from 'clsx'
 import type { ModelReasoningEffort, ModelSelection } from '@deepseek-ai/dsh-api-remotes/client'
 import {
   IconCheckOutline16, IconChevronDownOutline14, IconChevronRightOutline14,
-  IconWarningOutline16, Toast,
+  IconSparkle16, IconWarningOutline16, Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ModelSelectInjected } from './slots.ts'
@@ -59,7 +59,20 @@ export function ModelSelect(
   const lastActionRef = useRef<'load' | 'select'>('load')
   const [toast, setToast] = useState<{ seq: number; text: string } | null>(null)
   const toastSeq = useRef(0)
+  // Horizontal placement for the open menu: the CSS right:0 anchor aligns
+  // the menu's right edge with the trigger's, which is fine on wide cards
+  // but leaves the viewport's left side on narrow ones (the trigger sits
+  // mid-row, the send button claims the row's right edge). Measured and
+  // clamped like the Menu primitive's portal placement (ui-primitives
+  // Menu.tsx); null keeps the CSS anchor. The menu is also clipped by its
+  // nearest horizontally-clipping ancestor (the composer seat's scroll body
+  // on phones), so the clamp box is that ancestor, not the viewport, and
+  // the width shrinks to fit the same box when the 320px design width
+  // cannot.
+  const [menuLeft, setMenuLeft] = useState<number | null>(null)
+  const [menuWidth, setMenuWidth] = useState<number | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
   const id = useId()
@@ -122,6 +135,52 @@ export function ModelSelect(
     }
     document.addEventListener('mousedown', closeOutside)
     return () => { document.removeEventListener('mousedown', closeOutside) }
+  }, [open])
+
+  // Viewport clamp while open: the CSS right:0 anchor can push the menu's
+  // left edge past the viewport on narrow composer cards, where the trigger
+  // sits mid-row. The menu is actually clipped by its nearest ancestor with
+  // a non-visible horizontal overflow (the composer seat's scroll body on
+  // phones, `overflow-x: hidden`), so clamp inside that box with a 12px
+  // margin, and shrink the menu when the 320px design width cannot fit the
+  // same box. Re-place on resize in case the viewport or card reflows.
+  useLayoutEffect(() => {
+    if (!open) { setMenuLeft(null); setMenuWidth(null); return }
+    const place = (): void => {
+      /* v8 ignore next 3 -- the refs attach before the layout effect runs and the listeners die with it. */
+      const rootEl = rootRef.current
+      const menuEl = menuRef.current
+      if (rootEl === null || menuEl === null) return
+      const MARGIN = 12
+      // The clipping box is the nearest ancestor whose horizontal overflow
+      // is not visible (the composer seat's scroll body on phones clips the
+      // menu); fall back to the viewport when nothing clips.
+      let clipEl = rootEl.parentElement
+      while (clipEl !== null && getComputedStyle(clipEl).overflowX === 'visible') {
+        clipEl = clipEl.parentElement
+      }
+      const cr = clipEl === null
+        ? { left: 0, right: window.innerWidth, width: window.innerWidth }
+        : clipEl.getBoundingClientRect()
+      const r = rootEl.getBoundingClientRect()
+      let lw = menuEl.offsetWidth
+      if (lw === 0) return
+      // The width cap keeps the whole menu inside the clip box even when
+      // the 320px design width cannot fit (a 360px phone seat is ~304px).
+      if (lw > cr.width - 2 * MARGIN) {
+        lw = cr.width - 2 * MARGIN
+        setMenuWidth(lw)
+      } else {
+        setMenuWidth(null)
+      }
+      // Right-aligned to the trigger by default (matches the CSS right:0
+      // anchor); clamp so both edges stay 12px inside the clip box.
+      const x = Math.min(Math.max(r.right - lw, cr.left + MARGIN), cr.right - lw - MARGIN)
+      setMenuLeft(x - r.left)
+    }
+    place()
+    window.addEventListener('resize', place)
+    return () => { window.removeEventListener('resize', place) }
   }, [open])
 
   if (!available) return null
@@ -236,6 +295,7 @@ export function ModelSelect(
           }
         }}
       >
+        <span className={css.triggerIcon} aria-hidden><IconSparkle16 /></span>
         <span className={css.triggerLabel}>{modelLabel}</span>
         {effortLabel !== undefined && <span className={css.triggerEffort}>{effortLabel}</span>}
         <IconChevronDownOutline14 className={clsx(css.chevron, open && css.chevronOpen)} />
@@ -243,15 +303,28 @@ export function ModelSelect(
 
       {open && (
         <div
+          ref={menuRef}
           id={`${id}-menu`}
           className={css.menu}
           role="menu"
+          style={menuLeft === null
+            ? undefined
+            : menuWidth === null
+              ? { left: menuLeft, right: 'auto' }
+              : { left: menuLeft, right: 'auto', width: menuWidth, boxSizing: 'border-box' }}
           aria-label={t('menu.aria')}
           aria-busy={state.status === 'loading' || busy}
         >
           {pane === 'root' && (
             <>
-              <button ref={itemRef()} type="button" role="menuitem" className={css.cell} onClick={() => { setPane('model') }}>
+              <button
+                ref={itemRef()}
+                type="button"
+                role="menuitem"
+                className={css.cell}
+                title={modelLabel}
+                onClick={() => { setPane('model') }}
+              >
                 <span className={css.cellLabel}>{t('menu.model')}</span>
                 <span className={css.cellValue}>{modelLabel}</span>
                 <IconChevronRightOutline14 className={css.cellChevron} />

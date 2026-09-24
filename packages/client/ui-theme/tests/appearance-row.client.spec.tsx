@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-/** AppearanceRow behavior: three cubes, selection follows the persisted
- * preference, clicks drive setTheme. */
+/** AppearanceRow behavior: selector pill shows the active preference, the
+ * menu opens/closes, and selection drives setTheme. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { createSnapshotStore, type SessionListState, type WorkspaceListState } from '@deepseek-ai/dsh-client-runtime/client'
@@ -50,26 +50,40 @@ function mount(preference: ThemePreference = 'system') {
   return { store, setTheme }
 }
 
-const pressed = (name: RegExp): string | null =>
-  screen.getByRole('button', { name }).getAttribute('aria-pressed')
-
 describe('AppearanceRow', () => {
-  it('renders the title and three cubes with the preference cube selected', () => {
+  it('shows the title and the active preference label on the selector pill', () => {
     mount('dark')
     expect(screen.getByText('Appearance')).toBeDefined()
-    expect(pressed(/Dark/)).toBe('true')
-    expect(pressed(/Light/)).toBe('false')
-    expect(pressed(/System/)).toBe('false')
+    const trigger = screen.getByRole('button', { name: /Dark/ })
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
   })
 
-  it('click drives setTheme; selection follows the store mirror, not the click echo', () => {
+  it('opens the menu with all three options, selects a preference, and closes', () => {
     const b = mount('dark')
-    fireEvent.click(screen.getByRole('button', { name: /Light/ }))
+    const trigger = screen.getByRole('button', { name: /Dark/ })
+    fireEvent.click(trigger)
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('menuitem', { name: 'Light' })).toBeDefined()
+    expect(screen.getByRole('menuitem', { name: 'Dark' })).toBeDefined()
+    expect(screen.getByRole('menuitem', { name: 'System' })).toBeDefined()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Light' }))
     expect(b.setTheme).toHaveBeenCalledWith('light')
-    // No store write yet: selection is unchanged.
-    expect(pressed(/Dark/)).toBe('true')
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('menuitem', { name: 'Light' })).toBeNull()
+  })
+
+  it('closes on outside pointerdown without selecting', () => {
+    const b = mount('dark')
+    fireEvent.click(screen.getByRole('button', { name: /Dark/ }))
+    expect(screen.getByRole('menuitem', { name: 'Light' })).toBeDefined()
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('menuitem', { name: 'Light' })).toBeNull()
+    expect(b.setTheme).not.toHaveBeenCalled()
+  })
+
+  it('follows store changes; the pill label updates without a click', () => {
+    const b = mount('dark')
     act(() => { b.store.actions.sync('light', 1) })
-    expect(pressed(/Light/)).toBe('true')
-    expect(pressed(/Dark/)).toBe('false')
+    expect(screen.getByRole('button', { name: /Light/ })).toBeDefined()
   })
 })
