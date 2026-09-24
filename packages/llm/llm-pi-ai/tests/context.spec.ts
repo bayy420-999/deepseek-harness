@@ -162,6 +162,50 @@ describe('pi-ai request context conversion', () => {
     })
   })
 
+  it('merges consecutive user messages so the image survives a following text-only user message', async () => {
+    const context = await toPiContext(request([
+      user([{ type: 'image', attachment: ref }, { type: 'text', text: 'caption' }]),
+      user([{ type: 'text', text: 'runtime context' }]),
+    ]), attachments)
+
+    expect(context.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'image', data: 'AQ==', mimeType: 'image/png' },
+          { type: 'text', text: 'caption' },
+          { type: 'text', text: 'runtime context' },
+        ],
+        timestamp: 0,
+      },
+    ])
+  })
+
+  it('merges consecutive text-only user messages on the image path', async () => {
+    const context = await toPiContext(request([
+      user([{ type: 'text', text: 'first' }]),
+      user([{ type: 'text', text: 'second' }]),
+    ]), attachments)
+
+    expect(context.messages).toEqual([
+      { role: 'user', content: 'firstsecond', timestamp: 0 },
+    ])
+  })
+
+  it('does not merge user messages separated by an assistant on the image path', async () => {
+    const context = await toPiContext(request([
+      user([{ type: 'text', text: 'first' }]),
+      history('assistant', [{ type: 'text', text: 'response' }]),
+      user([{ type: 'text', text: 'second' }]),
+    ]), attachments)
+
+    expect(context.messages).toMatchObject([
+      { role: 'user', content: 'first' },
+      { role: 'assistant' },
+      { role: 'user', content: 'second' },
+    ])
+  })
+
   it('handles in-history system and assistant messages explicitly on the image path', async () => {
     await expect(toPiContext(request([
       history('system', [{ type: 'image', attachment: ref }]),
