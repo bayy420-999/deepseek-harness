@@ -15,6 +15,40 @@ body,
   margin: 0;
 }
 
+/* Mobile browsers: 100% resolves against the large viewport, so a visible
+   URL bar or toolbar hides the frame's bottom edge (the composer). Track the
+   dynamic viewport instead where supported; dvh equals the ordinary viewport
+   height on desktop engines, so the override is inert there. */
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
+
+  /* Keyboard avoidance on shells whose WebView ignores
+     interactive-widget=resizes-content: the on-screen keyboard shrinks the
+     VISUAL viewport but leaves the layout viewport at 100dvh, so the browser
+     pans the whole page to keep the focused composer visible — scrolling the
+     header and sidebar off-screen. ConversationRoot publishes the covered
+     height as --dsh-keyboard-inset, the live visual-viewport height as
+     --dsh-viewport-height, and flags data-dsh-keyboard='open' on the root
+     element; while open, shrink the mount to the visual viewport height and
+     stop the page being pannable, so the sticky composer rides the reduced
+     height and the shell chrome stays put. The mount is sized straight from
+     the visual viewport height (not `calc(100dvh - inset)`): on the IME-active
+     shell innerHeight and the ICB disagree, so a dvh subtraction over- or
+     under-shoots and leaves a gap between the composer and the keyboard. */
+  html[data-dsh-keyboard='open'] {
+    overflow: hidden;
+  }
+  html[data-dsh-keyboard='open'] body,
+  html[data-dsh-keyboard='open'] #root {
+    height: var(--dsh-viewport-height, 100dvh);
+    overflow: hidden;
+  }
+}
+
 body {
   font-family: var(--dsw-font-family);
   /* Grayscale antialiasing over subpixel rendering: WebKit/Blink and the

@@ -496,3 +496,108 @@ describe('ConversationRoot resident composer', () => {
     expect(b.view.queryByRole('button', { name: 'Retry' })).toBeNull()
   })
 })
+
+describe('keyboard avoidance', () => {
+  // jsdom ships no visualViewport; the inset effect runs against a stub that
+  // records listeners so tests can fire resize/scroll like the real shell.
+  let viewport: {
+    height: number
+    listeners: Record<string, () => void>
+    addEventListener: ReturnType<typeof vi.fn>
+    removeEventListener: ReturnType<typeof vi.fn>
+  }
+
+  beforeEach(() => {
+    viewport = {
+      height: window.innerHeight,
+      listeners: {},
+      addEventListener: vi.fn((event: string, handler: () => void) => { viewport.listeners[event] = handler }),
+      removeEventListener: vi.fn((event: string) => { delete viewport.listeners[event] }),
+    }
+    vi.stubGlobal('visualViewport', viewport)
+  })
+
+  /** The root element the inset is published on (base.css reads it here). */
+  const htmlRoot = (): HTMLElement => {
+    expect(document.documentElement).not.toBeNull()
+    return document.documentElement
+  }
+
+  const keyboardOpen = (): boolean => document.documentElement.hasAttribute('data-dsh-keyboard')
+
+  /** Shrink the visual viewport so `covered` pixels are hidden, then fire resize. */
+  const openKeyboard = (covered: number): void => {
+    viewport.height = covered
+    viewport.listeners['resize']?.()
+  }
+
+  it('publishes the covered height and the visual-viewport height when the keyboard opens', () => {
+    mount(conversationSnapshot())
+    openKeyboard(window.innerHeight - 400)
+    expect(htmlRoot().style.getPropertyValue('--dsh-keyboard-inset')).toBe('400px')
+    // The mount is sized from the live visual-viewport height, not a dvh
+    // subtraction, so it lands exactly on the visible area (no gap).
+    expect(htmlRoot().style.getPropertyValue('--dsh-viewport-height')).toBe(`${window.innerHeight - 400}px`)
+    expect(keyboardOpen()).toBe(true)
+  })
+
+  it('treats a small inset (browser chrome) as no keyboard', () => {
+    mount(conversationSnapshot())
+    openKeyboard(window.innerHeight - 40)
+    expect(htmlRoot().style.getPropertyValue('--dsh-keyboard-inset')).toBe('0px')
+    expect(htmlRoot().style.getPropertyValue('--dsh-viewport-height')).toBe('')
+    expect(keyboardOpen()).toBe(false)
+  })
+
+  it('uses a fixed inset threshold, so a mid IME still registers on a tall layout viewport', () => {
+    // The detection must not be a ratio of the ICB height: on resizes-visual
+    // engines the layout viewport (and thus `dvh`) is the unshrunken height,
+    // so `inset > k * clientHeight` can miss a real ~300px keyboard. A fixed
+    // chrome/keyboard split (~150px) is what keeps it reliable.
+    mount(conversationSnapshot())
+    openKeyboard(window.innerHeight - 200)
+    expect(htmlRoot().style.getPropertyValue('--dsh-keyboard-inset')).toBe('200px')
+    expect(htmlRoot().style.getPropertyValue('--dsh-viewport-height')).toBe(`${window.innerHeight - 200}px`)
+    expect(keyboardOpen()).toBe(true)
+    openKeyboard(window.innerHeight - 100)
+    expect(htmlRoot().style.getPropertyValue('--dsh-keyboard-inset')).toBe('0px')
+    expect(keyboardOpen()).toBe(false)
+  })
+
+  it('clears the inset, viewport height, and flag when the keyboard closes', () => {
+    mount(conversationSnapshot())
+    openKeyboard(window.innerHeight - 400)
+    openKeyboard(window.innerHeight)
+    expect(htmlRoot().style.getPropertyValue('--dsh-keyboard-inset')).toBe('0px')
+    expect(htmlRoot().style.getPropertyValue('--dsh-viewport-height')).toBe('')
+    expect(keyboardOpen()).toBe(false)
+  })
+
+  it('also updates on visualViewport scroll (pinned keyboard)', () => {
+    mount(conversationSnapshot())
+    viewport.height = window.innerHeight - 400
+    viewport.listeners['scroll']?.()
+    expect(htmlRoot().style.getPropertyValue('--dsh-keyboard-inset')).toBe('400px')
+    expect(htmlRoot().style.getPropertyValue('--dsh-viewport-height')).toBe(`${window.innerHeight - 400}px`)
+    expect(keyboardOpen()).toBe(true)
+  })
+
+  it('unmounts cleanly: listeners removed, root inset and flag dropped', () => {
+    const b = mount(conversationSnapshot())
+    openKeyboard(window.innerHeight - 400)
+    b.view.unmount()
+    expect(viewport.removeEventListener).toHaveBeenCalledWith('resize', expect.any(Function))
+    expect(viewport.removeEventListener).toHaveBeenCalledWith('scroll', expect.any(Function))
+    expect(htmlRoot().style.getPropertyValue('--dsh-keyboard-inset')).toBe('')
+    expect(htmlRoot().style.getPropertyValue('--dsh-viewport-height')).toBe('')
+    expect(keyboardOpen()).toBe(false)
+  })
+
+  it('is a no-op on shells without a visualViewport', () => {
+    vi.stubGlobal('visualViewport', null)
+    expect(() => mount(conversationSnapshot())).not.toThrow()
+    expect(htmlRoot().style.getPropertyValue('--dsh-keyboard-inset')).toBe('')
+    expect(htmlRoot().style.getPropertyValue('--dsh-viewport-height')).toBe('')
+    expect(keyboardOpen()).toBe(false)
+  })
+})
