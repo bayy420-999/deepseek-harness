@@ -23,7 +23,7 @@ import type { ClientSessionContext, InputTriggerSource } from '@deepseek-ai/dsh-
 import { apply, inject } from '../src/client/index.ts'
 import { SkillRow as SkillToolRow } from '../src/client/SkillRow.tsx'
 
-type SkillRow = { name: string; description: string; whenToUse?: string; modelInvocable?: boolean }
+type SkillRow = { name: string; description: string; whenToUse?: string; category?: string; modelInvocable?: boolean }
 type ListResult =
   | { ok: true; value: { skills: SkillRow[] } }
   | { ok: false; error: { code: string; message: string; details: object } }
@@ -57,7 +57,7 @@ function providePresentation(ctx: Context): PresentationCapture {
       return () => { capture.localeDisposed = true }
     },
     // Minimal bound-translate fake: zh dictionary lookup, key passthrough on miss.
-    bind: () => (key: string) => key === 'menu.userOnly' ? '仅用户' : key,
+    bind: () => (key: string) => key === 'menu.userOnly' ? '仅用户' : key === 'menu.other' ? '其他' : key,
   })
   return capture
 }
@@ -81,7 +81,7 @@ async function bench(list: ListFn, addressed?: SessionId, invoke?: InvokeFn) {
 }
 
 const CATALOG: SkillRow[] = [
-  { name: 'commit-helper', description: 'commit flow', modelInvocable: true },
+  { name: 'commit-helper', description: 'commit flow', modelInvocable: true, category: 'git' },
   { name: 'code-review', description: 'review flow', whenToUse: 'reviews', modelInvocable: true },
   { name: 'deploy', description: 'deploy flow', modelInvocable: true },
 ]
@@ -130,6 +130,7 @@ describe('apply', () => {
           'row.stopped': 'skill 加载已中止',
           'row.instructions': '说明',
           'menu.userOnly': '仅用户',
+          'menu.other': '其他',
         },
         en: {
           'row.running': 'Loading skill',
@@ -137,6 +138,7 @@ describe('apply', () => {
           'row.stopped': 'Skill load stopped',
           'row.instructions': 'Instructions',
           'menu.userOnly': 'user-only',
+          'menu.other': 'Other',
         },
       },
     }])
@@ -177,8 +179,8 @@ describe('candidates: sessionId addressing', () => {
     // Exact payload: session address only — no agent or transport vocabulary.
     expect(payloads).toEqual([{ sessionId: 's1' }])
     expect(items).toEqual([
-      { name: 'commit-helper', description: 'commit flow' },
-      { name: 'code-review', description: 'review flow' },
+      { name: 'commit-helper', description: 'commit flow', category: 'git' },
+      { name: 'code-review', description: 'review flow', category: '其他' },
     ])
   })
 
@@ -207,8 +209,8 @@ describe('catalog cache', () => {
     const second = await source.candidates(proj('s1'), req('co'))
     expect(payloads).toHaveLength(1)
     expect(second).toEqual([
-      { name: 'commit-helper', description: 'commit flow' },
-      { name: 'code-review', description: 'review flow' },
+      { name: 'commit-helper', description: 'commit flow', category: 'git' },
+      { name: 'code-review', description: 'review flow', category: '其他' },
     ])
     // A different session is its own key — one more RPC, not two.
     await source.candidates(proj('s2'), req(''))
@@ -223,7 +225,7 @@ describe('catalog cache', () => {
       source.candidates(proj('s1'), req('co')),
     ])
     expect(payloads).toHaveLength(1)
-    expect(a).toEqual([{ name: 'deploy', description: 'deploy flow' }])
+    expect(a).toEqual([{ name: 'deploy', description: 'deploy flow', category: '其他' }])
     expect(b).toHaveLength(2)
   })
 
@@ -375,8 +377,49 @@ describe('user-only marking', () => {
     const { source } = await bench(listOk(rows))
     const candidates = await source.candidates(proj('s1'), req(''))
     expect(candidates).toEqual([
-      { name: 'shared-skill', description: 'both surfaces' },
-      { name: 'user-only-skill', description: '仅用户 · user surface only' },
+      { name: 'shared-skill', description: 'both surfaces', category: '其他' },
+      { name: 'user-only-skill', description: '仅用户 · user surface only', category: '其他' },
+    ])
+  })
+})
+
+describe('category grouping', () => {
+  it('groups by the host category label verbatim, catch-all last, runs in first-appearance order', async () => {
+    const rows: SkillRow[] = [
+      { name: 'gmgn-token', description: 'token research', category: 'gmgn', modelInvocable: true },
+      { name: 'misc-one', description: 'misc first', modelInvocable: true },
+      { name: 'gmgn-swap', description: 'swap', category: 'gmgn', modelInvocable: true },
+      { name: 'garden-page', description: 'page', category: 'garden', modelInvocable: true },
+    ]
+    const { source } = await bench(listOk(rows))
+    const candidates = await source.candidates(proj('s1'), req(''))
+    expect(candidates.map(c => `${c.category}:${c.name}`)).toEqual([
+      'gmgn:gmgn-token',
+      'gmgn:gmgn-swap',
+      'garden:garden-page',
+      '其他:misc-one',
+    ])
+  })
+
+  it('keeps catalog order within a category run and whitespace-trims labels', async () => {
+    const rows: SkillRow[] = [
+      { name: 'gmgn-b', description: 'second', category: '  GMGN  ', modelInvocable: true },
+      { name: 'gmgn-a', description: 'first', category: 'GMGN', modelInvocable: true },
+    ]
+    const { source } = await bench(listOk(rows))
+    const candidates = await source.candidates(proj('s1'), req('gmgn'))
+    expect(candidates.map(c => c.name)).toEqual(['gmgn-b', 'gmgn-a'])
+    expect(candidates.every(c => c.category === 'GMGN')).toBe(true)
+  })
+
+  it('treats an empty or blank label as absent and falls into the catch-all', async () => {
+    const rows: SkillRow[] = [
+      { name: 'standalone', description: 'no category', category: '   ', modelInvocable: true },
+    ]
+    const { source } = await bench(listOk(rows))
+    const candidates = await source.candidates(proj('s1'), req(''))
+    expect(candidates).toEqual([
+      { name: 'standalone', description: 'no category', category: '其他' },
     ])
   })
 })

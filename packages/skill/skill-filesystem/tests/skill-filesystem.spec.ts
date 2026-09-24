@@ -242,6 +242,7 @@ describe('FileSystemSkillProvider', () => {
       'name: rich-skill',
       'description: rich description',
       'whenToUse: For richer local parsing',
+      'category: tooling',
       'disable-model-invocation: off',
       'user-invocable: YES',
       'metadata:',
@@ -263,6 +264,15 @@ describe('FileSystemSkillProvider', () => {
     await writeFile(join(root, 'user-only-skill/SKILL.md'), '---\nname: user-only-skill\ndescription: user-only description\ndisable-model-invocation: true\n---\n\nUser-only.\n')
     await writeSkill(root, 'model-only-skill', 'model-only description', 'Model-only.')
     await writeFile(join(root, 'model-only-skill/SKILL.md'), '---\nname: model-only-skill\ndescription: model-only description\nuser-invocable: false\n---\n\nModel-only.\n')
+    await writeFile(join(root, 'numeric-category.md'), '---\nname: numeric-category\ndescription: wrong-typed category\ncategory: 123\n---\n\nBody.\n')
+    // One grouping level: a folder's SKILL.md-bearing children inherit the
+    // folder name as their category unless they author one.
+    await writeSkill(join(root, 'gmgn'), 'gmgn-token', 'token research', 'Token research.')
+    await writeSkill(join(root, 'gmgn'), 'gmgn-swap', 'swap', 'Swap.')
+    await writeFile(join(root, 'gmgn/gmgn-swap/SKILL.md'), '---\nname: gmgn-swap\ndescription: swap\ncategory: trading\n---\n\nSwap.\n')
+    await writeSkill(join(root, 'reveng'), 'fingerprint-spoof', 'spoof', 'Spoof.')
+    await mkdir(join(root, 'deep', 'deeper'), { recursive: true })
+    await writeFile(join(root, 'deep/deeper/deep-skill.md'), '---\nname: deep-skill\ndescription: too deep\n---\n\nBody.\n')
 
     const ctx = await setupLocal(home)
     const listedBeforeDelete = await ctx.skills.list()
@@ -271,13 +281,24 @@ describe('FileSystemSkillProvider', () => {
     await rm(join(root, 'flat-skill.md'))
 
     expect(listedBeforeDelete.map(skill => skill.name)).toEqual([
+      'fingerprint-spoof',
       'flat-skill',
+      'gmgn-swap',
+      'gmgn-token',
       'model-only-skill',
       'no-trailing-body',
+      'numeric-category',
       'rich-skill',
       'user-only-skill',
     ])
     expect(flatSummary.invocation).toEqual({ modelInvocable: true, userInvocable: true })
+    expect(listedBeforeDelete.find(skill => skill.name === 'rich-skill')?.category).toBe('tooling')
+    // Group-folder fallback and authored override inside the group.
+    expect(listedBeforeDelete.find(skill => skill.name === 'gmgn-token')?.category).toBe('gmgn')
+    expect(listedBeforeDelete.find(skill => skill.name === 'gmgn-swap')?.category).toBe('trading')
+    expect(listedBeforeDelete.find(skill => skill.name === 'fingerprint-spoof')?.category).toBe('reveng')
+    // Deeper than the single grouping level stays excluded.
+    expect(listedBeforeDelete.find(skill => skill.name === 'deep-skill')).toBeUndefined()
     expect(await ctx.skills.get('flat-skill')).toBeUndefined()
     expect(await ctx.skills.get('no-trailing-body')).toMatchObject({
       invocation: { modelInvocable: true, userInvocable: true },
@@ -292,9 +313,18 @@ describe('FileSystemSkillProvider', () => {
     })
     expect(await ctx.skills.get('rich-skill')).toMatchObject({
       whenToUse: 'For richer local parsing',
+      category: 'tooling',
       invocation: { modelInvocable: true, userInvocable: true },
       metadata: { owner: 'tests' },
     })
+    // A wrong-typed optional value is omitted, never fatal: the skill
+    // survives discovery without the label.
+    const numericCategory = await ctx.skills.get('numeric-category')
+    expect(numericCategory).toMatchObject({ description: 'wrong-typed category' })
+    expect(numericCategory?.category).toBeUndefined()
+    // Grouped loads carry the inherited or authored category.
+    expect(await ctx.skills.get('gmgn-token')).toMatchObject({ category: 'gmgn' })
+    expect(await ctx.skills.get('gmgn-swap')).toMatchObject({ category: 'trading' })
     expect(await ctx.skills.get('Bad_Name')).toBeUndefined()
   })
 

@@ -96,6 +96,15 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* Category sub-heading inside a source group: slightly tighter than the
+ * group title so the source heading stays visually primary. */
+.categoryTitle {
+  padding: 6px 10px 2px;
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--dsw-alias-label-dimmed);
+}
+
 /* Pending-source row: same cell metrics, dimmed label. */
 .loading {
   display: flex;

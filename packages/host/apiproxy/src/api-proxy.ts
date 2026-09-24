@@ -3188,6 +3188,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
               name: skill.name,
               description: skill.description,
               ...skill.whenToUse === undefined ? {} : { whenToUse: skill.whenToUse },
+              ...skill.category === undefined ? {} : { category: skill.category },
               modelInvocable: skill.invocation.modelInvocable,
             })),
           })

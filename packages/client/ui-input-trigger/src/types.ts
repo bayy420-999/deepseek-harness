@@ -29,12 +29,20 @@ export type TriggerPosition = 'leading' | 'inline'
 /** Which of the three pick paths produced a pick. */
 export type PickVia = 'menu' | 'space' | 'enter'
 
-/** One menu candidate. Pure display data — zero behavior declaration. */
+/**
+ * One menu candidate. Pure display data — zero behavior declaration.
+ * `category` subdivides one source's flat item list into labeled runs: the
+ * menu renders a sub-heading row wherever it changes between adjacent
+ * items, so sources ordering items by category produce grouped sections.
+ * Keyboard navigation and picks stay item-indexed — sub-heading rows are
+ * presentation only.
+ */
 export interface InputTriggerCandidate {
   readonly name: string
   readonly description?: string
   readonly icon?: string
   readonly hint?: string
+  readonly category?: string
 }
 
 /** Pick-moment snapshot of the trigger token span. CAS: stale draftRev ⇒ the whole action no-ops. */
