@@ -136,6 +136,26 @@ function base64ImageOf(file: File): Promise<string> {
   })
 }
 
+/**
+ * Read a File's bytes once, at pick time. Serialization never re-reads the
+ * file: Android pickers hand back a file whose content URI can reject a
+ * second read at send time, so the bytes are captured while the picker grant
+ * is still fresh. A throw here is the caller's send failure.
+ */
+function readFileBytes(file: File): Promise<Uint8Array> {
+  return file.arrayBuffer().then(buffer => new Uint8Array(buffer))
+}
+
+/** Chunked byte-to-base64 (avoids blowing the stack on large images). */
+function bytesToBase64(data: Uint8Array): string {
+  let binary = ''
+  const chunk = 0x8000
+  for (let i = 0; i < data.length; i += chunk) {
+    binary += String.fromCharCode(...data.subarray(i, i + chunk))
+  }
+  return btoa(binary)
+}
+
 /** Unsupported browser-declared image type, localized by the UI boundary. */
 export class UnsupportedImageMediaTypeError extends Error {
   /** Browser-declared MIME value, possibly empty. */
@@ -158,6 +178,8 @@ export class ConversationController extends Service implements IConversation {
   /** Live upload state per file-kind draft; images never appear here. */
   readonly fileUploads: SnapshotStore<Record<string, DraftFileUpload>> = createSnapshotStore<Record<string, DraftFileUpload>>({})
   private readonly draftAttachments = new Map<DraftAttachmentId, ComposerAttachment>()
+  /** Eagerly-read image bytes (read once at pick time; send never re-reads the file). */
+  private readonly draftBytes = new Map<DraftAttachmentId, Promise<Uint8Array>>()
   private readonly fileUploadOperations = new Map<DraftAttachmentId, {
     readonly controller: AbortController
     readonly done: Promise<void>
@@ -196,6 +218,7 @@ export class ConversationController extends Service implements IConversation {
         if (attachment.kind === 'image') revokePreview(attachment.previewUrl)
       }
       this.draftAttachments.clear()
+      this.draftBytes.clear()
       this.fileUploads.set({})
     }, 'conversation draft attachments')
   }
@@ -258,7 +281,7 @@ export class ConversationController extends Service implements IConversation {
       : { type: 'file' as const, value: uploadFor(attachment).file })
     const serializeAttachments = (): Promise<Parameters<SessionFace['prompt']>[0]> => Promise.all(
       attachments.map(async attachment => attachment.kind === 'image'
-        ? { type: 'image' as const, ...await this.encodeImage(attachment.file) }
+        ? { type: 'image' as const, ...await this.encodeImage(attachment.id, attachment.file) }
         : { type: 'file' as const, receiptId: uploadFor(attachment).receiptId }),
     )
     const snapshot = session.getSnapshot()
@@ -310,7 +333,13 @@ export class ConversationController extends Service implements IConversation {
     return files.map((file) => {
       if (isImageMediaType(file.type)) {
         const attachment = browserDraftAttachment(file)
+        // Read the bytes once, at pick time, when the picker grant is still
+        // fresh: Android content:// URIs can reject a later re-read at send
+        // time, so the send serializes from this cached read instead.
+        const bytes = readFileBytes(file)
+        void bytes.catch(() => {}) // rejection surfaces at send, never an unhandled one here
         this.draftAttachments.set(attachment.id, attachment)
+        this.draftBytes.set(attachment.id, bytes)
         probeDimensions(attachment)
         return attachment
       }
@@ -452,7 +481,7 @@ export class ConversationController extends Service implements IConversation {
     const uploads = this.fileUploads.getSnapshot()
     return {
       attachments: await Promise.all(attachments.map(async (attachment) => {
-        if (attachment.kind === 'image') return { type: 'image' as const, ...await this.encodeImage(attachment.file) }
+        if (attachment.kind === 'image') return { type: 'image' as const, ...await this.encodeImage(attachment.id, attachment.file) }
         const upload = uploads[attachment.id]
         if (upload === undefined || upload.status !== 'ready') {
           throw new Error('conversation.serializeDraftAttachments: one or more files have not finished uploading')
@@ -473,6 +502,7 @@ export class ConversationController extends Service implements IConversation {
     this.fileUploadOperations.delete(id)
     operation?.controller.abort()
     this.draftAttachments.delete(id)
+    this.draftBytes.delete(id)
     if (attachment.kind === 'image') {
       revokePreview(attachment.previewUrl)
       return
@@ -566,17 +596,24 @@ export class ConversationController extends Service implements IConversation {
         continue
       }
       this.draftAttachments.delete(attachment.id)
+      this.draftBytes.delete(attachment.id)
       if (ref !== undefined && 'mediaType' in ref
         && uiConversation?.seedImageUrl(sessionId, ref, attachment.previewUrl) === true) continue
       revokePreview(attachment.previewUrl)
     }
   }
 
-  /** Canonical base64 wire form of one browser image file. */
-  private async encodeImage(file: File): Promise<Omit<Extract<SubmitAttachment, { type: 'image' }>, 'type'>> {
+  /** Canonical base64 wire form of one browser image file: bytes come from the
+   * pick-time eager read (Android picker grants can reject a send-time
+   * re-read), never from the File object directly. */
+  private async encodeImage(id: DraftAttachmentId, file: File): Promise<Omit<Extract<SubmitAttachment, { type: 'image' }>, 'type'>> {
+    const bytes = await this.draftBytes.get(id)
+    if (bytes === undefined) {
+      throw new Error('conversation.sendSession: one or more draft images are no longer available')
+    }
     return {
       mediaType: imageMediaType(file.type),
-      data: await base64ImageOf(file),
+      data: bytesToBase64(bytes),
       ...(file.name === '' ? {} : { name: file.name }),
     }
   }

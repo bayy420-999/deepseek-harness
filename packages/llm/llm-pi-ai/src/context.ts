@@ -168,9 +168,47 @@ function piContext(systemPrompt: string | undefined, options: GenerateOptions, m
   const tools = toolsOf(options)
   return {
     ...systemPrompt !== undefined ? { systemPrompt } : {},
-    messages,
+    messages: mergeConsecutiveUsers(messages),
     ...tools !== undefined && tools.length > 0 ? { tools } : {},
   }
+}
+
+/** Merge the content of a later user message into an earlier one, preserving order. */
+function mergeUserContent(
+  earlier: string | (TextContent | ImageContent)[],
+  later: string | (TextContent | ImageContent)[],
+): string | (TextContent | ImageContent)[] {
+  const parts: (TextContent | ImageContent)[] = [
+    ...typeof earlier === 'string'
+      ? earlier.length > 0 ? [{ type: 'text' as const, text: earlier }] : []
+      : earlier,
+    ...typeof later === 'string'
+      ? later.length > 0 ? [{ type: 'text' as const, text: later }] : []
+      : later,
+  ]
+  return parts.length === 0 || parts.every(part => part.type === 'text')
+    ? parts.map(part => (part as TextContent).text).join('')
+    : parts
+}
+
+/**
+ * Fold consecutive user messages into a single user message. Providers with
+ * multimodal input may only attend to the last user message in a run of user
+ * turns (for example the b-ai vision models), dropping images in earlier ones;
+ * consecutive user messages with no assistant turn between them are one user
+ * input semantically and merge losslessly.
+ */
+function mergeConsecutiveUsers(messages: PiMessage[]): PiMessage[] {
+  const merged: PiMessage[] = []
+  for (const message of messages) {
+    const last = merged[merged.length - 1]
+    if (last !== undefined && last.role === 'user' && message.role === 'user') {
+      last.content = mergeUserContent(last.content, message.content)
+    } else {
+      merged.push(message)
+    }
+  }
+  return merged
 }
 
 function appendAssistant(
