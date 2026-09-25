@@ -251,6 +251,8 @@ export interface SkillEntry {
   readonly description: string
   /** Optional extra routing guidance. */
   readonly whenToUse?: string
+  /** Optional user-facing grouping label; display-only, never reaches the model. */
+  readonly category?: string
   /** Whether the same skill is also advertised to the model. */
   readonly modelInvocable: boolean
 }

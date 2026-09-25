@@ -167,12 +167,38 @@ export function apply(ctx: ClientContext): void {
       if (signal.aborted) return []
       // The same ranking as the command group of this menu: case-insensitive
       // ordered subsequence, prefix hits first.
-      return rankByName(skills, query)
-        .map(skill => ({
-          name: skill.name,
+      // Category resolution per candidate: the host's category label (the
+      // install folder for grouped skills, or an authored frontmatter
+      // override), else the localized catch-all group. Items sort into
+      // category runs — first-appearance order, catch-all last, rank order
+      // preserved within a run — so the menu's per-change sub-headings render
+      // stable grouped sections.
+      const other = t('menu.other')
+      const decorated = rankByName(skills, query)
+        .map(skill => {
+          const authored = skill.category?.trim()
+          return {
+            skill,
+            category: authored !== undefined && authored.length > 0 ? authored : other,
+          }
+        })
+      const order = new Map<string, number>()
+      let next = 0
+      for (const { category } of decorated) {
+        if (category !== other && !order.has(category)) order.set(category, next++)
+      }
+      order.set(other, next)
+      return decorated
+        .map((entry, i) => ({ entry, i }))
+        .sort((a, b) => (order.get(a.entry.category)! - order.get(b.entry.category)!) || (a.i - b.i))
+        .map(({ entry }) => ({
+          name: entry.skill.name,
           // The user-only marker rides the description (the menu's only
           // secondary text); `hint` is the claim-state ghost text, not a badge.
-          description: skill.modelInvocable ? skill.description : `${t('menu.userOnly')} · ${skill.description}`,
+          description: entry.skill.modelInvocable
+            ? entry.skill.description
+            : `${t('menu.userOnly')} · ${entry.skill.description}`,
+          section: entry.category,
         }))
     },
     warm(session) {
