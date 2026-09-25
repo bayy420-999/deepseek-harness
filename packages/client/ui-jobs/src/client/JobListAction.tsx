@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEve
 import type { JobsSnapshot, JobView, ObservedJob } from '@deepseek-ai/dsh-api-job-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import {
-  IconChevronDownOutlineRegular, IconStopFillRegular, StateDot, TerminalBlock, useDismissOnOutsidePointer,
+  IconChevronDownOutlineRegular, IconQueueOutlineRegular, IconStopFillRegular, StateDot, TerminalBlock, useDismissOnOutsidePointer,
   type StateDotState, type TerminalBlockLabels,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
@@ -512,6 +512,7 @@ export function JobListAction({ sessionId, useJobs, watchRows, observe, killJob,
         className={css.trigger}
         aria-expanded={open}
         aria-label={countLabel}
+        title={countLabel}
         onClick={() => {
           // Sample the clock in the same commit that opens the list: the
           // mount-time value predates every job, so the first painted frame
@@ -522,7 +523,11 @@ export function JobListAction({ sessionId, useJobs, watchRows, observe, killJob,
         }}
       >
         {liveRows.length > 0 ? <StateDot state="ongoing" className={css.triggerDot} /> : null}
-        <span className={css.count}>{countLabel}</span>
+        <IconQueueOutlineRegular className={css.triggerIcon} />
+        {/* The live count is the badge; at zero the icon alone is the quiet
+            entry point into the session's job history. The full count label
+            rides the aria-label and the native tooltip. */}
+        {liveRows.length > 0 ? <span className={css.badge}>{liveRows.length}</span> : null}
         <IconChevronDownOutlineRegular size={12} className={open ? css.triggerOpen : undefined} />
       </button>
       {open
