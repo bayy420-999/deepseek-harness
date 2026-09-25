@@ -266,3 +266,55 @@
 .overlayLayer > * {
   pointer-events: auto;
 }
+
+/* Mobile overlay mode (viewport < MOBILE_OVERLAY_MAX, columns.ts): the
+   expanded sidebar and an open rightbar stop being grid tracks and overlay
+   the center instead, so neither squeezes the conversation. Both stay below
+   the shell overlay layer (z-index 20) and portalled menus (100+), and the
+   rightbar overlay covers the drawer when both are open. */
+.sidebarDrawer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 12;
+  box-shadow: var(--dsw-shadow-lv3);
+  animation: app-frame-drawer-in var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.rightbarOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  border-left: none;
+  background: var(--dsw-alias-bg-base);
+  animation: app-frame-overlay-in var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+/* Tap-to-close backdrop behind the drawer: one level below it, above the
+   columns; the shared bg-mask-1 token is the app's scrim fill. */
+.scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 11;
+  background: var(--dsw-alias-bg-mask-1);
+  animation: app-frame-overlay-in var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+@keyframes app-frame-drawer-in {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes app-frame-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebarDrawer,
+  .rightbarOverlay,
+  .scrim {
+    animation: none;
+  }
+}

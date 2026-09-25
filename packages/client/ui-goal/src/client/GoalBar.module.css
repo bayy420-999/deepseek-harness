@@ -14,11 +14,12 @@
     var(--dsh-composer-dock-inset)
   );
   margin: 0 auto;
+  /* Anonymous inline-size container: the narrow-card label rule below
+     queries this dock's own width, not the viewport. */
+  container-type: inline-size;
 }
 
 .bar {
-  position: relative;
-  isolation: isolate;
   box-sizing: border-box;
   display: flex;
   align-items: center;
@@ -28,21 +29,9 @@
   height: 36px;
   margin: 0 auto;
   padding: 4px 5px 4px 12px;
-  border: 0;
-  --dsw-elevation-stroke-color: var(--dsw-alias-border-l1);
-  border-radius: var(--dsw-radius-md);
-  box-shadow: var(--dsw-elevation-panel);
-}
-
-.bar::before {
-  position: absolute;
-  z-index: -1;
-  inset: 0;
-  border-radius: inherit;
-  background: var(--dsw-specific-menu);
-  backdrop-filter: var(--dsw-menu-backdrop-filter);
-  content: '';
-  pointer-events: none;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+  background: var(--dsw-specific-tip);
 }
 
 .goalGlyph {
@@ -90,8 +79,8 @@
   min-width: 0;
   height: 26px;
   padding: 0 8px;
-  border: 0.5px solid var(--dsw-alias-border-l4);
-  border-radius: var(--dsw-radius-sm);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
   background: var(--dsw-alias-bg-base);
   font-size: 13px;
   line-height: 20px;
@@ -125,7 +114,6 @@
   padding: 0;
   border: none;
   border-radius: 999px;
-  corner-shape: round;
   background: transparent;
   color: var(--dsw-alias-label-tertiary);
   cursor: pointer;
@@ -139,4 +127,13 @@
 .iconBtn:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* Phone-width cards: the phase label yields its width to the objective —
+   the bar's identity text. The glyph and the pause/resume action still
+   communicate the phase, and the whole objective rides the bar's title. */
+@container (max-width: 420px) {
+  .label {
+    display: none;
+  }
 }
