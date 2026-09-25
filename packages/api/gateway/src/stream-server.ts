@@ -41,7 +41,15 @@ const MAX_MISSED_HEARTBEATS = 2
 
 /** Own the no-server WebSocket acceptor and every active logical stream. */
 export class RemoteStreamMuxServer {
-  private readonly server = new WebSocketServer({ noServer: true })
+  private readonly server = new WebSocketServer({
+    noServer: true,
+    // permessage-deflate (RFC 7692): the event streams carry repeated
+    // session/event JSON (tool results, terminal rows, deltas); deflating
+    // large frames cuts wire bytes on mobile links. The `ws` default
+    // `threshold: 1024` leaves small frames untouched, bounding CPU cost.
+    // Browsers negotiate the extension automatically when the server offers it.
+    perMessageDeflate: true,
+  })
   private readonly connections = new Set<Promise<void>>()
   private readonly missedHeartbeats = new WeakMap<WebSocket, number>()
   private heartbeatTimer: NodeJS.Timeout | undefined
