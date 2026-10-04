@@ -551,6 +551,16 @@ function clientConfig(id: string, entry: string, clientBanner?: (fileName: strin
         const abs = importer !== undefined ? sourceAssetPath(source, importer) : source
         return CSS_VIRTUAL_PREFIX + abs + CSS_VIRTUAL_SUFFIX
       },
+/**
+ * CSS targets applied to every client-bundle stylesheet transform. Set to
+ * Chrome 90 to emit classic (max-width:…) syntax instead of the modern
+ * (width<=…) range syntax, which older WebViews (Chromium < 104) do not
+ * parse and silently drop. The target is deliberately conservative: range
+ * syntax is a progressive enhancement for the model preset, not the product
+ * CSS — the 720px phone breakpoint must work on every supported shell.
+ */
+const CSS_TARGETS = { chrome: 90 }
+
       async load(virtualId: string) {
         if (!virtualId.startsWith(CSS_VIRTUAL_PREFIX)) return null
         const fileId = virtualId.slice(CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length)
@@ -561,6 +571,7 @@ function clientConfig(id: string, entry: string, clientBanner?: (fileName: strin
           filename: fileId,
           code: source,
           cssModules: { pattern: '[hash]_[local]' },
+          targets: CSS_TARGETS,
           minify: true,
         })
         const classMap: Record<string, string> = {}
@@ -582,7 +593,7 @@ function clientConfig(id: string, entry: string, clientBanner?: (fileName: strin
         const fileId = virtualId.slice(INLINE_CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length)
         this.addWatchFile(fileId)
         const source = await readFile(fileId)
-        const { code } = transform({ filename: fileId, code: source, minify: true })
+        const { code } = transform({ filename: fileId, code: source, targets: CSS_TARGETS, minify: true })
         return `export default ${JSON.stringify(code.toString())};`
       },
     }, {
@@ -597,7 +608,7 @@ function clientConfig(id: string, entry: string, clientBanner?: (fileName: strin
         const fileId = virtualId.slice(GLOBAL_CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length)
         this.addWatchFile(fileId)
         const source = await readFile(fileId)
-        const { code } = transform({ filename: fileId, code: source, minify: true })
+        const { code } = transform({ filename: fileId, code: source, targets: CSS_TARGETS, minify: true })
         return styleInjectionModule(id, fileId, code.toString())
       },
     }],

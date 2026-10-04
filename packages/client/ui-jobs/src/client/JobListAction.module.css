@@ -30,12 +30,19 @@
   transform: rotate(180deg);
 }
 
-.triggerDot {
+.triggerDot,
+.triggerIcon {
   flex: none;
 }
 
 .count {
   margin: 0 5px;
+}
+
+/* Live-count badge: a bare figure after the queue glyph; absent at zero, so
+   an idle history entry is just the quiet icon. */
+.badge {
+  font-variant-numeric: tabular-nums;
 }
 
 .menu {

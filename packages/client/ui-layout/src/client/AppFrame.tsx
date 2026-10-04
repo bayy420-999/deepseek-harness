@@ -19,7 +19,7 @@ import type { ReactNode } from 'react'
 import type {
   PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore,
 } from '@deepseek-ai/dsh-client-ui-slots'
-import { CENTER_MIN, clampWidth, computeColumns, RIGHTBAR_DEFAULT_RATIO, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT } from './columns.ts'
+import { CENTER_MIN, clampWidth, computeColumns, MOBILE_OVERLAY_MAX, RIGHTBAR_DEFAULT_RATIO, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT, SIDEBAR_DRAWER_WIDTH } from './columns.ts'
 import { DocumentTitle } from './DocumentTitle.tsx'
 import type { createLayoutStore } from './stores.ts'
 import css from './AppFrame.module.css'
@@ -45,10 +45,16 @@ function MainPanel({ usePanelInfo, renderSlot }: Pick<PropsRuntime<'root'>, 'use
 /**
  * Right column grid item. Zero-width unless the occupant asked for a track; the
  * occupant's panel is positioned against the column's right edge, which never
- * moves, so it can hang over the centre when there is no track.
+ * moves, so it can hang over the centre when there is no track. In mobile
+ * overlay mode the same container becomes the full-frame overlay panel
+ * (overlay class) so the slot subtree stays mounted across the posture swap.
  */
-function RightbarColumn(props: { children?: ReactNode }) {
-  return <div className={css.rightbarCol} data-rightbar-col>{props.children}</div>
+function RightbarColumn(props: { children?: ReactNode; overlay?: boolean }) {
+  return (
+    <div className={props.overlay === true ? `${css.rightbarCol} ${css.rightbarOverlay}` : css.rightbarCol} data-rightbar-col>
+      {props.children}
+    </div>
+  )
 }
 
 /**
@@ -159,9 +165,18 @@ export function AppFrame({
 
   const narrow = viewport < SIDEBAR_AUTO_COLLAPSE
   const sidebarCollapsed = narrow ? !layoutInfo.narrowExpanded : layoutInfo.sidebar === 0
+  // Mobile overlay mode (below MOBILE_OVERLAY_MAX): the grid carries only
+  // the collapsed rail and the center — the expanded sidebar renders as an
+  // overlay drawer and an open rightbar as a full-frame overlay panel, so the
+  // center never concedes width to either. The stored preferences are
+  // untouched, so re-widening restores the ordinary columns.
+  const mobile = viewport < MOBILE_OVERLAY_MAX
+  const drawerOpen = mobile && !sidebarCollapsed
+  const drawerWidth = Math.max(0, Math.min(SIDEBAR_DRAWER_WIDTH, viewport - 64))
   const sidebarPreference = sidebarCollapsed
     ? 0
     : layoutInfo.sidebar === 0 ? SIDEBAR_DEFAULT : layoutInfo.sidebar
+  const sidebarTrackWidth = mobile ? 0 : sidebarPreference
   const rightbarPreference = layoutInfo.rightbar ?? viewport * RIGHTBAR_DEFAULT_RATIO
   // Desktop reopen controls occupy the frame's shell.leading seat (macOS) or
   // the Windows caption row; neither platform keeps an icon rail.
@@ -171,7 +186,10 @@ export function AppFrame({
   // Opening on a narrow frame collapses the left sidebar. Eligibility must
   // include that space before the occupant's first shown report arrives.
   const normal = computeColumns(viewport, !layoutInfo.rightbarShown && narrow ? 0 : sidebarPreference, rightbarPreference, collapsedWidth)
-  const cols = computeColumns(viewport, sidebarPreference, layoutInfo.rightbarTrack ? rightbarPreference : 0, collapsedWidth)
+  const cols = computeColumns(viewport, sidebarTrackWidth, mobile ? 0 : layoutInfo.rightbarTrack ? rightbarPreference : 0, collapsedWidth)
+  const rightbarOpen = layoutInfo.rightbarShown && normal.rightbar > 0
+  const rightbarOverlay = mobile && rightbarOpen
+  const sidebarWidth = drawerOpen ? drawerWidth : cols.sidebar
   const colsRef = useRef(cols)
   colsRef.current = cols
   const rightbarWidth = useRef(normal.rightbar)
@@ -241,8 +259,8 @@ export function AppFrame({
   const rightbarMax = cols.rightbar === 0 ? 0 : clampWidth(rightbarPreference, RIGHTBAR_MIN, viewport * RIGHTBAR_MAX_RATIO)
   const sidebar = useMemo(() => renderSlot('sidebar', {
     collapsed: sidebarCollapsed,
-    width: cols.sidebar,
-  }), [renderSlot, sidebarCollapsed, cols.sidebar])
+    width: sidebarWidth,
+  }), [renderSlot, sidebarCollapsed, sidebarWidth])
   const main = useMemo(() => (
     <MainPanel usePanelInfo={usePanelInfo} renderSlot={renderSlot} />
   ), [usePanelInfo, renderSlot])
@@ -277,15 +295,30 @@ export function AppFrame({
         useSessions={useSessions}
         usePanelInfo={usePanelInfo}
       />
-      <div className={css.sidebarCol}>
+      {/* Mobile drawer: the same column container becomes an absolute overlay
+          at the drawer width, so the slot subtree stays mounted across the
+          posture swap; the grid keeps the empty rail track behind it. */}
+      <div
+        className={drawerOpen ? `${css.sidebarCol} ${css.sidebarDrawer}` : css.sidebarCol}
+        style={drawerOpen ? { width: drawerWidth } : undefined}
+      >
         {sidebar}
       </div>
       <>
         <CenterColumn>{main}</CenterColumn>
-        <RightbarColumn>
+        <RightbarColumn overlay={rightbarOverlay}>
           {renderSlot('rightbar', { width: normal.rightbar, viewportWidth: viewport, canShow: normal.rightbar > 0 })}
         </RightbarColumn>
       </>
+      {/* Tap-to-close backdrop behind the mobile drawer (the drawer itself
+          stays above it); rendered only while the drawer is open. */}
+      {drawerOpen && (
+        <div
+          className={css.scrim}
+          aria-hidden
+          onClick={() => { actions.toggleSidebar() }}
+        />
+      )}
       <div className={css.overlayLayer} data-shell-overlay>
         {overlays}
       </div>
@@ -294,9 +327,10 @@ export function AppFrame({
           {leading}
         </div>
       )}
-      {/* The collapsed rail is fixed-width: no resize handle while closed. */}
-      {!sidebarCollapsed && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
-      {layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && normal.rightbar > 0 && (
+      {/* The collapsed rail is fixed-width: no resize handle while closed.
+          Mobile overlay mode has no grid-resizable columns at all. */}
+      {!mobile && !sidebarCollapsed && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
+      {!mobile && layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && normal.rightbar > 0 && (
         <DragHandle side="rightbar" left={viewport - normal.rightbar} onStart={onRightbarStart} onDrag={onRightbarDrag} onEnd={onDragEnd} />
       )}
     </div>

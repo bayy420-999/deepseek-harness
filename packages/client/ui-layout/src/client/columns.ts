@@ -21,6 +21,17 @@ export const SIDEBAR_COLLAPSED = 56
  * LG breakpoint); a manual toggle below it re-expands over the squeezed center
  * (stores.ts narrowExpanded). */
 export const SIDEBAR_AUTO_COLLAPSE = 1024
+/** Viewport width below which AppFrame switches to the mobile overlay mode:
+ * the expanded sidebar becomes an overlay drawer above the center column and
+ * an open rightbar becomes a full-frame overlay panel, instead of grid
+ * tracks. The grid keeps the collapsed rail as its only sidebar track, so
+ * the center never concedes width to an open panel. Above this width (but
+ * below SIDEBAR_AUTO_COLLAPSE) panels keep squeezing the center as before. */
+export const MOBILE_OVERLAY_MAX = 720
+/** Expanded drawer width in mobile overlay mode: a full-viewport drawer would
+ * hide the chat behind it entirely, so the drawer stops 64px short of the
+ * viewport edge and the chat edge stays reachable as a tap-to-close cue. */
+export const SIDEBAR_DRAWER_WIDTH = 320
 /** Right column drag clamp floor. */
 export const RIGHTBAR_MIN = 300
 /** Maximum normal right panel width as a fraction of the frame. */

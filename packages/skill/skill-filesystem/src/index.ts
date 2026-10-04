@@ -112,6 +112,7 @@ interface ParsedSkill extends SkillText {
   name: string
   description: string
   whenToUse?: string
+  category?: string
   invocation: SkillInvocationPolicy
   metadata?: Record<string, unknown>
 }
@@ -119,6 +120,8 @@ interface ParsedSkill extends SkillText {
 interface LocalLocator {
   path: string
   directory: string
+  /** Discovery group folder name when the skill sits one level below a root. */
+  group?: string
 }
 
 interface ResolvedWatchConfig {
@@ -211,10 +214,12 @@ export class FileSystemSkillProvider implements SkillProvider {
     const locator = candidate.locator as LocalLocator
     const parsed = await parseSkillFile(locator.path, this.ctx, options.signal, candidate.source === 'bundled')
     if (parsed === undefined) return undefined
+    const category = parsed.category ?? (locator.group !== undefined && locator.group.length >= 2 ? locator.group : undefined)
     return {
       name: parsed.name,
       description: parsed.description,
       ...parsed.whenToUse !== undefined ? { whenToUse: parsed.whenToUse } : {},
+      ...category !== undefined ? { category } : {},
       invocation: parsed.invocation,
       source: candidate.source,
       provider: this.name,
@@ -720,34 +725,85 @@ function hasErrorCode(error: unknown, code: string): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === code
 }
 
+/**
+ * Discover flat Markdown skills, direct bundles, and one level of grouped bundles.
+ * A valid direct SKILL.md takes precedence over scanning that directory as a group.
+ * Missing roots produce no candidates; other directory-read failures propagate.
+ * @param root - Discovery path, source rank, host trust, and .system exclusion policy.
+ * @param ctx - Filesystem services and logger used to read and validate skills.
+ * @param provider - Provider identifier attached to each candidate.
+ * @returns Parsed candidates with locators retained for fresh reads on load.
+ */
 async function discoverRoot(root: SkillRoot, ctx: Context, provider: string): Promise<SkillCandidate[]> {
   const skills: SkillCandidate[] = []
   const entries = await listSkillRootEntries(root, ctx)
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     if (root.skipSystem && entry.name === '.system') continue
-    const locator = entry.type === 'directory'
-      ? { path: join(entry.path, 'SKILL.md'), directory: entry.path }
-      : entry.type === 'file' && entry.name.endsWith('.md')
-        ? { path: entry.path, directory: root.path }
-        : undefined
-    if (locator === undefined) continue
+    if (entry.type === 'directory') {
+      const directLocator = { path: join(entry.path, 'SKILL.md'), directory: entry.path }
+      const direct = await parseSkillFile(directLocator.path, ctx, undefined, root.trustedHost === true)
+      if (direct !== undefined) {
+        // parseSkillFile resolves symlinks (realpath) for the candidate
+        // path; the locator keeps the link path so get() re-resolves fresh.
+        appendParsedSkill(skills, root, provider, directLocator, direct, undefined)
+        continue
+      }
+      // One grouping level: <root>/<group>/<name>/SKILL.md. The group folder
+      // name is the category fallback; nested **/SKILL.md stays excluded.
+      for (const nested of await listSkillRootEntries({ ...root, path: entry.path }, ctx)) {
+        if (root.skipSystem && nested.name === '.system') continue
+        if (nested.type !== 'directory') continue
+        const nestedLocator = { path: join(nested.path, 'SKILL.md'), directory: nested.path, group: entry.name }
+        const parsed = await parseSkillFile(nestedLocator.path, ctx, undefined, root.trustedHost === true)
+        if (parsed === undefined) continue
+        appendParsedSkill(skills, root, provider, nestedLocator, parsed, entry.name)
+      }
+      continue
+    }
+    if (entry.type !== 'file' || !entry.name.endsWith('.md')) continue
+    const locator = { path: entry.path, directory: root.path }
     const parsed = await parseSkillFile(locator.path, ctx, undefined, root.trustedHost === true)
     if (parsed === undefined) continue
-    skills.push({
-      name: parsed.name,
-      description: parsed.description,
-      ...parsed.whenToUse !== undefined ? { whenToUse: parsed.whenToUse } : {},
-      invocation: parsed.invocation,
-      provider,
-      source: root.source,
-      rank: root.rank,
-      locator,
-      resourceBase: { kind: 'directory', path: locator.directory },
-      path: parsed.path,
-      ...parsed.metadata !== undefined ? { metadata: parsed.metadata } : {},
-    })
+    appendParsedSkill(skills, root, provider, locator, parsed, undefined)
   }
   return skills
+}
+
+/**
+ * Append a candidate, preserving its locator separately from the resolved file path.
+ * Authored categories take precedence over group names of at least two characters.
+ * @param skills - Candidate array mutated by appending one entry.
+ * @param root - Source and rank assigned to the candidate.
+ * @param provider - Identifier of the provider that can reload the skill.
+ * @param locator - Discovery path and resource directory retained for later loads.
+ * @param parsed - Validated frontmatter and resolved file path.
+ * @param group - Optional discovery-folder name used as the category fallback.
+ */
+function appendParsedSkill(
+  skills: SkillCandidate[],
+  root: SkillRoot,
+  provider: string,
+  locator: LocalLocator,
+  parsed: ParsedSkill,
+  group: string | undefined,
+): void {
+  const category = parsed.category ?? (group !== undefined && group.length >= 2 ? group : undefined)
+  skills.push({
+    name: parsed.name,
+    description: parsed.description,
+    ...parsed.whenToUse !== undefined ? { whenToUse: parsed.whenToUse } : {},
+    ...category !== undefined ? { category } : {},
+    invocation: parsed.invocation,
+    provider,
+    source: root.source,
+    rank: root.rank,
+    locator,
+    resourceBase: { kind: 'directory', path: locator.directory },
+    // Resolved file path (parseSkillFile realpaths); the locator keeps the
+    // link path so get() re-resolves symlinks fresh on every load.
+    path: parsed.path,
+    ...parsed.metadata !== undefined ? { metadata: parsed.metadata } : {},
+  })
 }
 
 async function listSkillRootEntries(root: SkillRoot, ctx: Context): Promise<SkillRootEntry[]> {
@@ -794,6 +850,16 @@ async function listSkillRootEntriesFromNode(root: SkillRoot, ctx: Context): Prom
   return result
 }
 
+/**
+ * Read a skill and validate its required frontmatter and invocation policy.
+ * Invalid frontmatter is logged and skipped; cancellation and other read failures propagate.
+ * @param path - Skill file to resolve and read.
+ * @param ctx - Filesystem services and logger for validation warnings.
+ * @param signal - Optional cancellation signal for reading the file.
+ * @param trustedHost - Use the host filesystem even when ctx.fs is available.
+ * @returns Parsed metadata and trimmed body, or undefined for absent or invalid
+ * skills; ctx.fs also skips non-text content and targets that are not files.
+ */
 async function parseSkillFile(path: string, ctx: Context, signal?: AbortSignal, trustedHost = false): Promise<ParsedSkill | undefined> {
   const raw = await readSkillText(ctx, path, signal, trustedHost)
   signal?.throwIfAborted()
@@ -832,6 +898,7 @@ async function parseSkillFile(path: string, ctx: Context, signal?: AbortSignal, 
     name,
     description,
     ...optionalString(parsed.data, 'whenToUse'),
+    ...optionalString(parsed.data, 'category'),
     invocation,
     ...optionalMetadata(parsed.data),
     path: raw.path,

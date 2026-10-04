@@ -2,7 +2,7 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import { constants, createReadStream } from 'node:fs'
-import { chmod, link, mkdir, open, readFile, unlink } from 'node:fs/promises'
+import { chmod, link, mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
 import { dirname, join, parse, resolve } from 'node:path'
 import {
   AttachmentError,
@@ -161,7 +161,14 @@ async function ensureDurableDirectory(path: string, boundary: string): Promise<v
   let level = target
   while (level !== stop) {
     const parent = dirname(level)
-    await syncDirectory(parent)
+    try {
+      await syncDirectory(parent)
+    } catch (error) {
+      /* v8 ignore start -- a permission boundary (e.g. Android SELinux blocking open of /data/data) is unreachable on CI hosts that can open every ancestor. */
+      if (error instanceof Error && 'code' in error && ['EACCES', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) return
+      throw error
+      /* v8 ignore stop */
+    }
     /* v8 ignore next -- filesystem-root guard: callers pass a boundary that is an ancestor of path, so the walk reaches it first. */
     if (parent === level) return
     level = parent
@@ -263,6 +270,59 @@ export async function publishImmutableObjectStream(
 }
 
 /**
+ * Hard-link one staged object into place, falling back to rename where hard
+ * links are denied (e.g. Android SELinux): rename would silently overwrite a
+ * concurrent publisher, so on denial the target is re-checked first and an
+ * existing target is integrity-verified instead of clobbered.
+ * @param source - staged temporary path.
+ * @param target - final object path.
+ * @param sha256 - expected digest for an existing-target race.
+ */
+async function linkStagedObject(source: string, target: string, sha256: string): Promise<void> {
+  try {
+    await link(source, target)
+    return
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error)) throw error
+    if (error.code === 'EEXIST') {
+      if (await digestFile(target) !== sha256) {
+        throw new AttachmentError('Stored attachment failed integrity verification.', 'ATTACHMENT_CORRUPT')
+      }
+      return
+    }
+    if (!['EACCES', 'EPERM', 'ENOTSUP', 'ENOSYS'].includes(error.code ?? '')) throw error
+    let targetExists = false
+    try {
+      await readFile(target)
+      targetExists = true
+    } catch {
+      /* target absent -- fall through to rename */
+    }
+    if (targetExists) {
+      if (await digestFile(target) !== sha256) {
+        throw new AttachmentError('Stored attachment failed integrity verification.', 'ATTACHMENT_CORRUPT')
+      }
+      return
+    }
+    await rename(source, target)
+  }
+}
+
+/**
+ * Discard one staging name: after a rename fallback the temporary is already
+ * gone, so ENOENT here is the success path, not a cleanup failure.
+ * @param path - staging path to remove.
+ */
+async function removeStagedPath(path: string): Promise<void> {
+  await unlink(path).catch(
+    (cleanupError: unknown) => {
+      /* v8 ignore next -- The callback requires a second independent staging-unlink failure. */
+      if (!(cleanupError instanceof Error && 'code' in cleanupError && cleanupError.code === 'ENOENT')) throw cleanupError
+    },
+  )
+}
+
+/**
  * Publish another durable hard-link name for an existing immutable object.
  * @param root - absolute versioned attachment root.
  * @param source - existing content-addressed object below `root`.
@@ -279,15 +339,7 @@ export async function publishImmutableAlias(
   try {
     const boundary = await ensureDurableHome(dirname(dirname(resolve(root))))
     await ensureDurableDirectory(parent, boundary)
-    try {
-      await link(source, target)
-    } catch (error) {
-      /* v8 ignore next -- Private same-filesystem directories make EEXIST the only recoverable link race. */
-      if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error
-      if (await digestFile(target) !== sha256) {
-        throw new AttachmentError('Stored attachment failed integrity verification.', 'ATTACHMENT_CORRUPT')
-      }
-    }
+    await linkStagedObject(source, target, sha256)
     await chmod(target, 0o400)
     const stop = resolve(root)
     for (let level = parent; level !== stop; level = dirname(level)) {
@@ -355,18 +407,10 @@ async function publishStagedObject(
   const parent = dirname(target)
   try {
     await ensureDurableDirectory(parent, staged.boundary)
-    try {
-      await link(staged.path, target)
-    } catch (error) {
-      /* v8 ignore next -- Private same-filesystem directories make EEXIST the only recoverable link race. */
-      if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error
-      if (await digestFile(target) !== staged.sha256) {
-        throw new AttachmentError('Stored attachment failed integrity verification.', 'ATTACHMENT_CORRUPT')
-      }
-    }
+    await linkStagedObject(staged.path, target, staged.sha256)
     // Windows shares the read-only attribute across hard links and refuses to
     // unlink either name once it is set, so discard the staging name first.
-    await unlink(staged.path)
+    await removeStagedPath(staged.path)
     // The target remains the sole link for a new object; this also restores
     // read-only mode when the deduplication path observes an existing object.
     await chmod(target, 0o400)

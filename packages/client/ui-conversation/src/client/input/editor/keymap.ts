@@ -35,6 +35,13 @@ export interface ComposerKeymapHandlers {
   /** Plain Enter submits; exactly Ctrl+Enter or Cmd+Enter selects accelerated delivery. */
   submit(accelerated: boolean): void
   /**
+   * Whether a non-accelerated plain Enter stays a newline instead of
+   * submitting. Coarse-pointer devices (no hardware Shift) read plain Enter
+   * as a newline; the Send button is the send path, while accelerated chords
+   * keep their meaning for attached hardware keyboards.
+   */
+  plainEnterNewline?(): boolean
+  /**
    * Pasted files with directory metadata supplied by the clipboard entry API.
    * @param files - browser files in clipboard order.
    * @param directories - known directory members; absent when no entry identifies a directory.
@@ -150,10 +157,15 @@ export function registerComposerKeymap(editor: LexicalEditor, handlers: Composer
         event?.preventDefault()
         return true
       }
+      // Coarse-pointer devices (no hardware Shift) take plain Enter as a
+      // newline: fall through to Lexical's native line break. Accelerated
+      // chords still submit (handled below).
+      const accelerated = event?.ctrlKey === true || event?.metaKey === true
+      if (!accelerated && handlers.plainEnterNewline?.() === true) return false
       event?.preventDefault()
       if (event?.repeat === true) return true // held-down Enter must not machine-gun sends
       if (!handlers.canSubmit()) return true
-      handlers.submit(event?.ctrlKey === true || event?.metaKey === true)
+      handlers.submit(accelerated)
       return true
     }, COMMAND_PRIORITY_CRITICAL),
     editor.registerCommand(PASTE_COMMAND, (event) => {

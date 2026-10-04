@@ -19,6 +19,11 @@ interface DraftViewGate {
   showToast: (text: string) => void
   t: ComposerBarProps['t']
   canAcceptDrop: boolean
+  /**
+   * Whether a non-accelerated plain Enter stays a newline (coarse-pointer
+   * devices with no hardware Shift).
+   */
+  touchEnter: boolean
 }
 
 /**
@@ -116,6 +121,7 @@ export function installDraftKeymap(
     },
     dismissPopup: () => { keyboard.dismissPopup() },
     canSubmit: () => !gate.current.locked && !gate.current.machineBusy,
+    plainEnterNewline: () => gate.current.touchEnter,
     submit: (accelerated) => {
       const g = gate.current
       // Empty-draft accelerated Enter acts on the queue instead of the

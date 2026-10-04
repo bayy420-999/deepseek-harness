@@ -127,6 +127,17 @@ export const InputBar = memo(function InputBar({
   }, [])
   const cardRef = useRef<HTMLDivElement | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  // Coarse-pointer devices (Android phones, tablets, iPads) have no hardware
+  // Shift, so plain Enter is a newline there and the Send button is the send
+  // path. jsdom leaves matchMedia absent; that reads as a fine-pointer desktop.
+  const touchEnter = useMemo(
+    () => typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches,
+    [],
+  )
+  // + button popup menu: contains "Slash commands" and "Attach media".
+  const [plusMenuOpen, setPlusMenuOpen] = useState(false)
+  const plusMenuRef = useRef<HTMLDivElement | null>(null)
+  const plusButtonRef = useRef<HTMLButtonElement | null>(null)
 
   // A continuable child without its live parent cannot accept human input,
   // but its independent Stop below stays available while it runs.
@@ -246,11 +257,11 @@ export const InputBar = memo(function InputBar({
   // registration survives re-renders without re-arming per keystroke.
   const gate = useRef({
     locked, machineBusy, canSteerQueue, running, steeringAvailable, busyEnter,
-    intakeFiles, uploadsPending, showToast, t, canAcceptDrop,
+    intakeFiles, uploadsPending, showToast, t, canAcceptDrop, touchEnter,
   })
   gate.current = {
     locked, machineBusy, canSteerQueue, running, steeringAvailable, busyEnter,
-    intakeFiles, uploadsPending, showToast, t, canAcceptDrop,
+    intakeFiles, uploadsPending, showToast, t, canAcceptDrop, touchEnter,
   }
 
   useEffect(() => {
@@ -280,6 +291,29 @@ export const InputBar = memo(function InputBar({
     if (editor !== null) focusDraftEditor(editor, revealSelection)
     toggleCommandMenu?.(keyboard.caretSpan())
   }
+
+  // The + popup closes on an outside pointer press or Escape: the same
+  // layering as the command menu (an open overlay closes first).
+  useEffect(() => {
+    if (!plusMenuOpen) return
+    const onPointerDown = (e: PointerEvent): void => {
+      const target = e.target as Node | null
+      if (target !== null
+        && plusMenuRef.current?.contains(target) !== true
+        && plusButtonRef.current?.contains(target) !== true) {
+        setPlusMenuOpen(false)
+      }
+    }
+    const onKeyDown = (e: globalThis.KeyboardEvent): void => {
+      if (e.key === 'Escape') setPlusMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [plusMenuOpen])
 
   // The no-session Workspace trigger: the resident editable div acts as the
   // picker trigger for keyboard users (no editor is bound in this state).
@@ -417,20 +451,59 @@ export const InputBar = memo(function InputBar({
         />
         <div ref={rowRef} className={css.row}>
           <div className={css.tools} hidden={activity}>
-            <Tooltip label={t('input.commands')} side="top" delayMs={500}>
-              <button
-                type="button"
-                className={css.add}
-                aria-label={t('input.commands')}
-                aria-haspopup="listbox"
-                aria-expanded={commandMenuOpen}
-                disabled={locked || toggleCommandMenu === undefined}
-                onMouseDown={keepFocus}
-                onClick={onToggleCommandMenu}
-              >
-                <IconPlusOutlineMedium size={14} />
-              </button>
-            </Tooltip>
+            <div className={css.plusWrap}>
+              <Tooltip label={t('input.moreOptions')} side="top" delayMs={500}>
+                <button
+                  ref={plusButtonRef}
+                  type="button"
+                  className={css.add}
+                  aria-label={t('input.moreOptions')}
+                  aria-haspopup="menu"
+                  aria-expanded={plusMenuOpen}
+                  disabled={locked || (toggleCommandMenu === undefined && addFiles === undefined)}
+                  onMouseDown={keepFocus}
+                  onClick={() => { setPlusMenuOpen(prev => !prev) }}
+                >
+                  <IconPlusOutlineMedium size={14} />
+                </button>
+              </Tooltip>
+              {plusMenuOpen && (
+                <div ref={plusMenuRef} className={css.plusMenu} role="menu">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={css.plusMenuItem}
+                    disabled={locked || toggleCommandMenu === undefined}
+                    onMouseDown={keepFocus}
+                    onClick={() => {
+                      setPlusMenuOpen(false)
+                      onToggleCommandMenu()
+                    }}
+                  >
+                    <svg className={css.plusMenuIcon} viewBox="0 0 16 16" width="14" height="14" aria-hidden>
+                      <path d="M6.5 2.5l-4 4 4 4 1.4-1.4-2.6-2.6 2.6-2.6L6.5 2.5zM9.5 2.5L8.1 3.9l2.6 2.6-2.6 2.6 1.4 1.4 4-4-4-4z" fill="currentColor" />
+                    </svg>
+                    <span className={css.plusMenuLabel}>{t('input.slashCommands')}</span>
+                  </button>
+                  {addFiles !== undefined && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={css.plusMenuItem}
+                      disabled={locked || machineBusy}
+                      onMouseDown={keepFocus}
+                      onClick={() => {
+                        setPlusMenuOpen(false)
+                        fileInputRef.current?.click()
+                      }}
+                    >
+                      <IconPlusOutlineMedium className={css.plusMenuIcon} size={14} />
+                      <span className={css.plusMenuLabel}>{t('input.attachMedia')}</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
             <input
               ref={fileInputRef}
               type="file"

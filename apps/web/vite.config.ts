@@ -177,7 +177,10 @@ export default defineConfig({
     // The worker bootstrap holds its page at top-level await; Vite's default
     // `modules` target (es2020-era) rejects that syntax.
     target: 'es2022',
-    sourcemap: true,
+    // Production builds ship NO sourcemaps: maps are 56% of the shipped dist
+    // (6.7MB of 12MB on the reference build) and mobile browsers never fetch
+    // them. Re-enable for a debugging build with `vite build --sourcemap`.
+    sourcemap: false,
     rollupOptions: {
       input: {
         index: src('./index.html'),
