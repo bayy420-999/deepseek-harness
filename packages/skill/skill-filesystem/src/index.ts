@@ -725,6 +725,15 @@ function hasErrorCode(error: unknown, code: string): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === code
 }
 
+/**
+ * Discover flat Markdown skills, direct bundles, and one level of grouped bundles.
+ * A valid direct SKILL.md takes precedence over scanning that directory as a group.
+ * Missing roots produce no candidates; other directory-read failures propagate.
+ * @param root - Discovery path, source rank, host trust, and .system exclusion policy.
+ * @param ctx - Filesystem services and logger used to read and validate skills.
+ * @param provider - Provider identifier attached to each candidate.
+ * @returns Parsed candidates with locators retained for fresh reads on load.
+ */
 async function discoverRoot(root: SkillRoot, ctx: Context, provider: string): Promise<SkillCandidate[]> {
   const skills: SkillCandidate[] = []
   const entries = await listSkillRootEntries(root, ctx)
@@ -760,6 +769,16 @@ async function discoverRoot(root: SkillRoot, ctx: Context, provider: string): Pr
   return skills
 }
 
+/**
+ * Append a candidate, preserving its locator separately from the resolved file path.
+ * Authored categories take precedence over group names of at least two characters.
+ * @param skills - Candidate array mutated by appending one entry.
+ * @param root - Source and rank assigned to the candidate.
+ * @param provider - Identifier of the provider that can reload the skill.
+ * @param locator - Discovery path and resource directory retained for later loads.
+ * @param parsed - Validated frontmatter and resolved file path.
+ * @param group - Optional discovery-folder name used as the category fallback.
+ */
 function appendParsedSkill(
   skills: SkillCandidate[],
   root: SkillRoot,
@@ -831,6 +850,16 @@ async function listSkillRootEntriesFromNode(root: SkillRoot, ctx: Context): Prom
   return result
 }
 
+/**
+ * Read a skill and validate its required frontmatter and invocation policy.
+ * Invalid frontmatter is logged and skipped; cancellation and other read failures propagate.
+ * @param path - Skill file to resolve and read.
+ * @param ctx - Filesystem services and logger for validation warnings.
+ * @param signal - Optional cancellation signal for reading the file.
+ * @param trustedHost - Use the host filesystem even when ctx.fs is available.
+ * @returns Parsed metadata and trimmed body, or undefined for absent or invalid
+ * skills; ctx.fs also skips non-text content and targets that are not files.
+ */
 async function parseSkillFile(path: string, ctx: Context, signal?: AbortSignal, trustedHost = false): Promise<ParsedSkill | undefined> {
   const raw = await readSkillText(ctx, path, signal, trustedHost)
   signal?.throwIfAborted()
